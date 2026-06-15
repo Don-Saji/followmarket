@@ -1,16 +1,34 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Users, PlusCircle, FileUp, Bell, LogOut } from "lucide-react";
-import { auth } from "@/lib/firebase/config";
+import { LayoutDashboard, FileUp, Bell, LogOut } from "lucide-react";
+import { auth, db } from "@/lib/firebase/config";
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/contexts/AuthContext";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 
 export default function MarketerLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { user } = useAuth();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, "notifications"),
+      where("userId", "==", user.uid),
+      where("read", "==", false)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setUnreadCount(snapshot.size);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -19,8 +37,6 @@ export default function MarketerLayout({ children }: { children: React.ReactNode
 
   const navItems = [
     { name: "Dashboard", href: "/marketer", icon: LayoutDashboard },
-    { name: "Audience", href: "/marketer/audience", icon: Users },
-    { name: "Campaigns", href: "/marketer/campaigns", icon: PlusCircle },
     { name: "Reports", href: "/marketer/reports", icon: FileUp },
     { name: "Notifications", href: "/marketer/notifications", icon: Bell },
   ];
@@ -31,7 +47,7 @@ export default function MarketerLayout({ children }: { children: React.ReactNode
         {/* Sidebar */}
         <aside className="w-64 border-r border-gray-200 dark:border-gray-800 flex flex-col">
           <div className="p-6 border-b border-gray-200 dark:border-gray-800">
-            <h2 className="text-xl font-bold tracking-tight">market</h2>
+            <h2 className="text-xl font-bold tracking-tight">Market Pulse</h2>
             <p className="text-xs text-gray-500 uppercase tracking-widest mt-1">Marketer Panel</p>
           </div>
           <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
@@ -42,14 +58,21 @@ export default function MarketerLayout({ children }: { children: React.ReactNode
                 <Link
                   key={item.name}
                   href={item.href}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-sm font-medium ${
+                  className={`flex items-center justify-between px-3 py-2 rounded-md transition-colors text-sm font-medium ${
                     isActive
                       ? "bg-black text-white dark:bg-white dark:text-black"
                       : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-900"
                   }`}
                 >
-                  <Icon className="w-4 h-4" />
-                  {item.name}
+                  <div className="flex items-center gap-3">
+                    <Icon className="w-4 h-4" />
+                    {item.name}
+                  </div>
+                  {item.name === "Notifications" && unreadCount > 0 && (
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                      {unreadCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}

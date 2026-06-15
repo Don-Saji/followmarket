@@ -8,11 +8,17 @@ import { Loader2, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+interface Audience {
+  id: string;
+  name?: string;
+  size: number;
+}
+
 export default function NewCampaignPage() {
   const { user } = useAuth();
   const router = useRouter();
   
-  const [audiences, setAudiences] = useState<any[]>([]);
+  const [audiences, setAudiences] = useState<Audience[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Form State
@@ -22,26 +28,33 @@ export default function NewCampaignPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (user) {
-      fetchAudiences();
-    }
-  }, [user]);
-
-  const fetchAudiences = async () => {
-    try {
-      const q = query(collection(db, "audiences"), where("marketerId", "==", user?.uid));
-      const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAudiences(data);
-      if (data.length > 0) {
-        setAudienceId(data[0].id);
+    if (!user) return;
+    let active = true;
+    const fetchAudiences = async () => {
+      try {
+        const q = query(collection(db, "audiences"), where("marketerId", "==", user.uid));
+        const querySnapshot = await getDocs(q);
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Audience));
+        if (active) {
+          setAudiences(data);
+          if (data.length > 0) {
+            setAudienceId(data[0].id);
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching audiences:", error);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
-    } catch (error) {
-      console.error("Error fetching audiences:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    fetchAudiences();
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,7 +123,7 @@ export default function NewCampaignPage() {
               {audiences.length === 0 ? (
                 <div className="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 p-3 rounded-md">
                   You must create an audience segment first before creating a campaign.
-                  <Link href="/marketer/audience" className="ml-2 underline font-medium">Create one now</Link>
+                  <Link href="/marketer/campaigns?tab=audience" className="ml-2 underline font-medium">Create one now</Link>
                 </div>
               ) : (
                 <select

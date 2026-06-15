@@ -3,28 +3,44 @@
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase/config";
 import { collection, query, where, getDocs, updateDoc, doc } from "firebase/firestore";
-import { Users, Loader2, MoreVertical, ShieldBan, CheckCircle } from "lucide-react";
+import { Users, Loader2, ShieldBan, CheckCircle } from "lucide-react";
+
+interface User {
+  id: string;
+  name?: string;
+  email?: string;
+  status?: string;
+  createdAt?: string;
+}
 
 export default function AdminUsersPage() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    let active = true;
+    const fetchUsers = async () => {
+      try {
+        const q = query(collection(db, "users"), where("role", "==", "marketer"));
+        const querySnapshot = await getDocs(q);
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+        if (active) {
+          setUsers(data);
+        }
+      } catch (error) {
+        console.error("Error fetching users:", error);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
 
-  const fetchUsers = async () => {
-    try {
-      const q = query(collection(db, "users"), where("role", "==", "marketer"));
-      const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setUsers(data);
-    } catch (error) {
-      console.error("Error fetching users:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    fetchUsers();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const toggleStatus = async (userId: string, currentStatus: string) => {
     const newStatus = currentStatus === "active" ? "suspended" : "active";

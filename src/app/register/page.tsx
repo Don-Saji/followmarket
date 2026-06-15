@@ -33,11 +33,12 @@ export default function RegisterPage() {
       });
 
       router.push("/marketer");
-    } catch (err: any) {
-      if (err.message && err.message.toLowerCase().includes("permission")) {
+    } catch (err) {
+      const errorObj = err as Error;
+      if (errorObj.message && errorObj.message.toLowerCase().includes("permission")) {
         setError("Firestore Permissions Error: Please update your Firestore Security Rules in the Firebase Console to allow creating users. (e.g., allow read, write: if request.auth != null;)");
       } else {
-        setError(err.message || "Failed to register.");
+        setError(errorObj.message || "Failed to register.");
       }
     } finally {
       setLoading(false);
@@ -48,7 +49,7 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center bg-white dark:bg-black text-black dark:text-white p-4">
       <div className="max-w-sm w-full">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold tracking-tighter">market</h1>
+          <h1 className="text-3xl font-bold tracking-tighter">Market Pulse</h1>
           <p className="text-sm text-gray-500 mt-2">Create a marketer account</p>
         </div>
         

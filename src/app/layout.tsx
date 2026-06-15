@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 import { Providers } from "@/components/Providers";
 
 export const metadata: Metadata = {
-  title: "Market Application",
+  title: "Market Pulse",
   description: "Minimalist Admin and Marketer Dashboard",
 };
 

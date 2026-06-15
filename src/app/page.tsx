@@ -5,7 +5,7 @@ export default function Home() {
   return (
     <div className="flex flex-col min-h-screen bg-white dark:bg-black text-black dark:text-white">
       <header className="px-6 py-4 flex items-center justify-between border-b border-gray-100 dark:border-gray-900">
-        <div className="font-bold text-xl tracking-tighter">market</div>
+        <div className="font-bold text-xl tracking-tighter">Market Pulse</div>
         <div className="flex items-center gap-4 text-sm font-medium">
           <Link href="/login" className="hover:opacity-70 transition-opacity">
             Sign In
@@ -43,7 +43,7 @@ export default function Home() {
       </main>
       
       <footer className="py-6 text-center text-sm text-gray-500 border-t border-gray-100 dark:border-gray-900">
-        &copy; {new Date().getFullYear()} market. All rights reserved.
+        &copy; {new Date().getFullYear()} Market Pulse. All rights reserved.
       </footer>
     </div>
   );

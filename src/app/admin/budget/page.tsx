@@ -3,31 +3,46 @@
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase/config";
 import { collection, query, where, getDocs, updateDoc, doc } from "firebase/firestore";
-import { DollarSign, Loader2, Save } from "lucide-react";
+import { IndianRupee, Loader2, Save } from "lucide-react";
+
+interface Marketer {
+  id: string;
+  name?: string;
+  email?: string;
+  budgetAllocated?: number;
+}
 
 export default function AdminBudgetPage() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<Marketer[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    let active = true;
+    const fetchUsers = async () => {
+      try {
+        const q = query(collection(db, "users"), where("role", "==", "marketer"));
+        const querySnapshot = await getDocs(q);
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Marketer));
+        if (active) {
+          setUsers(data);
+        }
+      } catch (error) {
+        console.error("Error fetching users:", error);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
 
-  const fetchUsers = async () => {
-    try {
-      const q = query(collection(db, "users"), where("role", "==", "marketer"));
-      const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setUsers(data);
-    } catch (error) {
-      console.error("Error fetching users:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    fetchUsers();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSaveBudget = async (userId: string) => {
     setIsSaving(true);
@@ -58,7 +73,7 @@ export default function AdminBudgetPage() {
         </div>
       ) : users.length === 0 ? (
         <div className="bg-white dark:bg-black p-12 rounded-lg border border-gray-200 dark:border-gray-800 text-center">
-          <DollarSign className="w-12 h-12 mx-auto text-gray-300 mb-4" />
+          <IndianRupee className="w-12 h-12 mx-auto text-gray-300 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">No marketers found</h3>
           <p className="text-gray-500 mt-1">You can allocate budgets once marketers register.</p>
         </div>
@@ -81,7 +96,7 @@ export default function AdminBudgetPage() {
                   <td className="px-6 py-4">
                     {editingId === user.id ? (
                       <div className="flex items-center gap-2">
-                        <span className="text-gray-500">$</span>
+                        <span className="text-gray-500">₹</span>
                         <input
                           type="number"
                           value={editValue}
@@ -92,7 +107,7 @@ export default function AdminBudgetPage() {
                       </div>
                     ) : (
                       <span className="font-medium">
-                        ${(user.budgetAllocated || 0).toLocaleString()}
+                        ₹{(user.budgetAllocated || 0).toLocaleString()}
                       </span>
                     )}
                   </td>

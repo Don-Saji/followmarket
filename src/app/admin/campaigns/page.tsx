@@ -5,35 +5,57 @@ import { db } from "@/lib/firebase/config";
 import { collection, query, getDocs, updateDoc, doc, addDoc, serverTimestamp } from "firebase/firestore";
 import { CheckSquare, Loader2, Check, X } from "lucide-react";
 
+interface Campaign {
+  id: string;
+  status?: string;
+  createdAt?: { toMillis: () => number };
+  name: string;
+  budget?: number | string;
+  marketerId: string;
+}
+
 export default function AdminCampaignsPage() {
-  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchCampaigns();
-  }, []);
+    let active = true;
+    const fetchCampaigns = async () => {
+      try {
+        const q = query(collection(db, "campaigns"));
+        const querySnapshot = await getDocs(q);
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Campaign));
+        
+        // Sort by status (Pending first) then by date
+        data.sort((a, b) => {
+          const aStatus = a.status || "";
+          const bStatus = b.status || "";
+          const aTime = a.createdAt?.toMillis() || 0;
+          const bTime = b.createdAt?.toMillis() || 0;
 
-  const fetchCampaigns = async () => {
-    try {
-      const q = query(collection(db, "campaigns"));
-      const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // Sort by status (Pending first) then by date
-      data.sort((a, b) => {
-        if (a.status === "Pending" && b.status !== "Pending") return -1;
-        if (a.status !== "Pending" && b.status === "Pending") return 1;
-        return b.createdAt?.toMillis() - a.createdAt?.toMillis();
-      });
-      
-      setCampaigns(data);
-    } catch (error) {
-      console.error("Error fetching campaigns:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+          if (aStatus === "Pending" && bStatus !== "Pending") return -1;
+          if (aStatus !== "Pending" && bStatus === "Pending") return 1;
+          return bTime - aTime;
+        });
+        
+        if (active) {
+          setCampaigns(data);
+        }
+      } catch (error) {
+        console.error("Error fetching campaigns:", error);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchCampaigns();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleStatusUpdate = async (campaignId: string, marketerId: string, campaignName: string, newStatus: "Active" | "Rejected") => {
     setProcessingId(campaignId);
@@ -76,7 +98,7 @@ export default function AdminCampaignsPage() {
         <div className="bg-white dark:bg-black p-12 rounded-lg border border-gray-200 dark:border-gray-800 text-center">
           <CheckSquare className="w-12 h-12 mx-auto text-gray-300 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">No campaigns found</h3>
-          <p className="text-gray-500 mt-1">Marketers haven't proposed any campaigns yet.</p>
+          <p className="text-gray-500 mt-1">Marketers haven&apos;t proposed any campaigns yet.</p>
         </div>
       ) : (
         <div className="bg-white dark:bg-black rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">

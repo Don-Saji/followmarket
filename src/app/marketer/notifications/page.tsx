@@ -3,39 +3,58 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/contexts/AuthContext";
 import { db } from "@/lib/firebase/config";
-import { collection, query, where, getDocs, orderBy, updateDoc, doc } from "firebase/firestore";
-import { Bell, Loader2, CheckCircle2 } from "lucide-react";
+import { collection, query, where, getDocs, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { Bell, Loader2, CheckCircle2, Trash2 } from "lucide-react";
+
+interface Notification {
+  id: string;
+  read?: boolean;
+  title?: string;
+  message?: string;
+  createdAt?: { toMillis: () => number };
+}
 
 export default function NotificationsPage() {
   const { user } = useAuth();
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (user) {
-      fetchNotifications();
-    }
-  }, [user]);
+    if (!user) return;
+    let active = true;
+    const fetchNotifications = async () => {
+      try {
+        const q = query(
+          collection(db, "notifications"), 
+          where("userId", "==", user.uid)
+        );
+        const querySnapshot = await getDocs(q);
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Notification));
+        
+        // Sort client-side
+        data.sort((a, b) => {
+          const aTime = a.createdAt?.toMillis() || 0;
+          const bTime = b.createdAt?.toMillis() || 0;
+          return bTime - aTime;
+        });
+        
+        if (active) {
+          setNotifications(data);
+        }
+      } catch (error) {
+        console.error("Error fetching notifications:", error);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
 
-  const fetchNotifications = async () => {
-    try {
-      const q = query(
-        collection(db, "notifications"), 
-        where("userId", "==", user?.uid)
-      );
-      const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // Sort client-side
-      data.sort((a, b) => b.createdAt?.toMillis() - a.createdAt?.toMillis());
-      
-      setNotifications(data);
-    } catch (error) {
-      console.error("Error fetching notifications:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    fetchNotifications();
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   const markAsRead = async (id: string) => {
     try {
@@ -43,6 +62,16 @@ export default function NotificationsPage() {
       setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
     } catch (error) {
       console.error("Error updating notification:", error);
+    }
+  };
+
+  const deleteNotification = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this notification?")) return;
+    try {
+      await deleteDoc(doc(db, "notifications", id));
+      setNotifications(notifications.filter(n => n.id !== id));
+    } catch (error) {
+      console.error("Error deleting notification:", error);
     }
   };
 
@@ -62,7 +91,7 @@ export default function NotificationsPage() {
       ) : notifications.length === 0 ? (
         <div className="bg-white dark:bg-black p-12 rounded-lg border border-gray-200 dark:border-gray-800 text-center">
           <Bell className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">You're all caught up!</h3>
+          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">You&apos;re all caught up!</h3>
           <p className="text-gray-500 mt-1">You have no new notifications right now.</p>
         </div>
       ) : (
@@ -91,14 +120,22 @@ export default function NotificationsPage() {
                 <p className="text-gray-600 dark:text-gray-400 text-sm mt-1 mb-3">
                   {notification.message}
                 </p>
-                {!notification.read && (
+                <div className="flex items-center gap-4">
+                  {!notification.read && (
+                    <button 
+                      onClick={() => markAsRead(notification.id)}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-black dark:hover:text-white transition-colors"
+                    >
+                      <CheckCircle2 className="w-3 h-3" /> Mark as read
+                    </button>
+                  )}
                   <button 
-                    onClick={() => markAsRead(notification.id)}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-black dark:hover:text-white transition-colors"
+                    onClick={() => deleteNotification(notification.id)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-red-500 hover:text-red-750 transition-colors"
                   >
-                    <CheckCircle2 className="w-3 h-3" /> Mark as read
+                    <Trash2 className="w-3.5 h-3.5" /> Delete
                   </button>
-                )}
+                </div>
               </div>
             </div>
           ))}
