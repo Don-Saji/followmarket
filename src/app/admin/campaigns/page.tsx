@@ -137,7 +137,7 @@ export default function AdminCampaignsPage() {
                         <button 
                           onClick={() => handleStatusUpdate(campaign.id, campaign.marketerId, campaign.name, 'Active')}
                           disabled={processingId === campaign.id}
-                          className="inline-flex items-center gap-1 text-xs font-medium bg-black text-white dark:bg-white dark:text-black px-3 py-1.5 rounded-md hover:opacity-90 disabled:opacity-50"
+                          className="inline-flex items-center gap-1 text-xs font-medium bg-blue-600 text-white dark:bg-white dark:text-black px-3 py-1.5 rounded-md hover:bg-blue-700 dark:hover:opacity-90 transition-colors disabled:opacity-50"
                         >
                           <Check className="w-3.5 h-3.5" /> Approve
                         </button>

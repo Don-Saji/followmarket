@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/lib/contexts/AuthContext";
-import { db, storage } from "@/lib/firebase/config";
+import { db } from "@/lib/firebase/config";
 import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "firebase/firestore";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import {
   Loader2,
   FileText,
@@ -12,12 +11,11 @@ import {
   MapPin,
   Calendar,
   IndianRupee,
-  Printer,
+  Eye,
   X,
   FileUp,
-  Clock
+  Plus
 } from "lucide-react";
-import Link from "next/link";
 
 interface ActivityRecord {
   id: string;
@@ -52,22 +50,31 @@ interface Report {
 
 const getTimestamp = () => Date.now();
 
+const ACTIVITY_TYPES = [
+  "Meetings with Institutes",
+  "Follow up with Institutes",
+  "Campaigns Conducted",
+  "Participation in Conferences",
+  "Meetings with Hospitals",
+  "Follow up with Hospitals"
+];
+
 export default function ReportsPage() {
   const { user } = useAuth();
   const printAreaRef = useRef<HTMLDivElement>(null);
 
   // Data State
-  const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filterActivityType, setFilterActivityType] = useState<string>("all");
 
   // Form State
-  const [selectedActivityId, setSelectedActivityId] = useState("");
-  const [content, setContent] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
+  const [activityType, setActivityType] = useState<string>("");
+  const [formData, setFormData] = useState<Record<string, any>>({}); // eslint-disable-line @typescript-eslint/no-explicit-any
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [editReportId, setEditReportId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Print Modal State
   const [selectedReportForPrint, setSelectedReportForPrint] = useState<Report | null>(null);
@@ -80,27 +87,7 @@ export default function ReportsPage() {
 
     const fetchData = async () => {
       try {
-        // 1. Fetch activities logged by this marketer
-        const actQ = query(
-          collection(db, "marketer_activities"),
-          where("marketerId", "==", user.uid)
-        );
-        const actSnap = await getDocs(actQ);
-        const actData = actSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ActivityRecord));
-
-        // Sort activities by date/created at descending
-        actData.sort((a, b) => {
-          const aTime = a.createdAt?.toMillis() || 0;
-          const bTime = b.createdAt?.toMillis() || 0;
-          return bTime - aTime;
-        });
-
-        if (active) {
-          setActivities(actData);
-          if (actData.length > 0) setSelectedActivityId(actData[0].id);
-        }
-
-        // 2. Fetch past reports
+        // Fetch past reports
         const repQ = query(
           collection(db, "reports"),
           where("marketerId", "==", user.uid)
@@ -133,7 +120,7 @@ export default function ReportsPage() {
   }, [user]);
 
   // Helper to extract the primary name of the event/place
-  const getPrimaryName = (record: ActivityRecord | undefined) => {
+  const getPrimaryName = (record: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (!record) return "N/A";
     return (
       record.institutionName ||
@@ -144,31 +131,36 @@ export default function ReportsPage() {
     );
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+  const handleInputChange = (field: string, value: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const handleActivityTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const type = e.target.value;
+    setActivityType(type);
+    if (!editReportId) {
+      setFormData({});
     }
   };
 
-  const selectedActivity = activities.find(a => a.id === selectedActivityId);
+  const selectedActivity = activityType ? ({ activityType, ...formData } as any) : null; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   const handleResetForm = () => {
     setEditReportId(null);
-    setContent("");
-    setFile(null);
-    setUploadProgress(0);
-    if (activities.length > 0) {
-      setSelectedActivityId(activities[0].id);
-    }
+    setActivityType("");
+    setFormData({});
+    setErrorMessage(null);
+    setIsFormModalOpen(false);
   };
 
   const handleEditReport = (report: Report) => {
     setEditReportId(report.id);
-    setSelectedActivityId(report.activityId);
-    setContent(report.content || "");
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
+    setActivityType(report.activityType || "");
+    setFormData(report.activityDetails || {});
+    setIsFormModalOpen(true);
   };
 
   const handleDeleteReport = async (reportId: string) => {
@@ -247,37 +239,47 @@ export default function ReportsPage() {
 
   const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !selectedActivityId || !selectedActivity) return;
+    if (!user || !activityType) return;
 
     setIsSubmitting(true);
+    setErrorMessage(null);
     try {
-      const actName = getPrimaryName(selectedActivity);
-      const actType = selectedActivity.activityType;
+      const actName = getPrimaryName(formData);
+      const actType = activityType;
 
-      // Extract details excluding firestore metadata
-      const details = { ...selectedActivity } as Record<string, unknown>;
-      delete details.id;
-      delete details.marketerId;
-      delete details.activityType;
-      delete details.createdAt;
-      delete details.updatedAt;
+      // Format numeric input fields before saving
+      const formattedData: Record<string, any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
+      Object.entries(formData).forEach(([key, val]) => {
+        if (val === "" || val === undefined || val === null) return;
 
-      const saveToFirestore = async (downloadURL?: string, fileName?: string) => {
+        if (
+          [
+            "costOfVisit",
+            "finalYearStudents",
+            "studentsAttended",
+            "studentsRegistered",
+            "conferenceParticipants",
+            "footfalls",
+            "registrationsCount",
+            "bedsCount",
+            "employeesCount"
+          ].includes(key)
+        ) {
+          formattedData[key] = parseFloat(val) || 0;
+        } else {
+          formattedData[key] = val;
+        }
+      });
+
+      const saveToFirestore = async () => {
         if (editReportId) {
           // Update Mode
           const updateFields: Record<string, any> = { // eslint-disable-line @typescript-eslint/no-explicit-any
-            activityId: selectedActivityId,
             activityType: actType,
             activityName: actName,
-            content,
-            activityDetails: details,
+            activityDetails: formattedData,
             updatedAt: serverTimestamp()
           };
-
-          if (downloadURL) {
-            updateFields.fileUrl = downloadURL;
-            updateFields.fileName = fileName || "";
-          }
 
           const docRef = doc(db, "reports", editReportId);
           await updateDoc(docRef, updateFields);
@@ -307,14 +309,13 @@ export default function ReportsPage() {
           const payload = {
             marketerId: user.uid,
             marketerEmail: user.email,
-            activityId: selectedActivityId,
+            activityId: `inline_${Date.now()}`,
             activityType: actType,
             activityName: actName,
-            content,
-            fileUrl: downloadURL || "",
-            fileName: fileName || "",
+            fileUrl: "",
+            fileName: "",
             status: "Draft",
-            activityDetails: details,
+            activityDetails: formattedData,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           };
@@ -334,155 +335,552 @@ export default function ReportsPage() {
         }
       };
 
-      if (file) {
-        // Upload file if present
-        const storageRef = ref(storage, `reports/${user.uid}/${getTimestamp()}_${file.name}`);
-        const uploadTask = uploadBytesResumable(storageRef, file);
-
-        uploadTask.on(
-          "state_changed",
-          (snapshot) => {
-            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-            setUploadProgress(progress);
-          },
-          (error) => {
-            console.error("Upload failed:", error);
-            setIsSubmitting(false);
-          },
-          async () => {
-            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-            await saveToFirestore(downloadURL, file.name);
-          }
-        );
-      } else {
-        await saveToFirestore();
-      }
-    } catch (error) {
+      await saveToFirestore();
+    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
       console.error("Error submitting report:", error);
+      setErrorMessage(error.message || "An unexpected error occurred during submission.");
+    } finally {
       setIsSubmitting(false);
     }
   };
 
+  const getFilteredReports = () => {
+    let result = [...reports];
+    if (filterActivityType !== "all") {
+      result = result.filter(r => r.activityType === filterActivityType);
+    }
+
+    result.sort((a, b) => {
+      const aTime = a.createdAt?.toMillis() || 0;
+      const bTime = b.createdAt?.toMillis() || 0;
+      return bTime - aTime;
+    });
+    return result;
+  };
+
   const triggerPrintModal = async (report: Report) => {
     setSelectedReportForPrint(report);
-
-    // Check if the activity details are in state, else fetch
-    let act = activities.find(a => a.id === report.activityId);
-    if (!act) {
-      // Activity might not be in the current user's fetched activities list (if it is archived or old)
-      // For now, construct a dummy object from report cached fields
-      act = {
-        id: report.activityId,
-        activityType: report.activityType,
-        institutionName: report.activityName
-      } as ActivityRecord;
-    }
-    setSelectedActivityForPrint(act);
+    setSelectedActivityForPrint(report.activityDetails as ActivityRecord);
     setIsPrintModalOpen(true);
   };
 
-  const handlePrint = () => {
-    if (typeof window !== "undefined") {
-      const printContents = printAreaRef.current?.innerHTML;
 
-      if (printContents) {
-        // Create an iframe or temporary window to prevent Next.js layout from breaking on print restore
-        const printWindow = window.open("", "_blank");
-        if (printWindow) {
-          printWindow.document.write(`
-            <html>
-              <head>
-                <title>Activity Report - ${selectedReportForPrint?.activityName}</title>
-                <style>
-                  body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; color: #111; line-height: 1.6; }
-                  .header { border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
-                  .title { font-size: 28px; font-weight: bold; margin: 0; }
-                  .subtitle { font-size: 14px; color: #555; margin-top: 5px; }
-                  .section { margin-bottom: 25px; }
-                  .section-title { font-size: 16px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #555; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-bottom: 15px; }
-                  .grid { display: grid; grid-template-cols: 1fr 1fr; gap: 15px; }
-                  .label { font-weight: bold; font-size: 13px; color: #666; }
-                  .value { font-size: 14px; margin-bottom: 5px; }
-                  .content { background: #f9f9f9; padding: 20px; border-radius: 8px; border: 1px solid #eee; white-space: pre-wrap; font-size: 14px; }
-                  @media print {
-                    body { padding: 0; }
-                    .content { background: none; border: none; padding: 0; }
-                  }
-                </style>
-              </head>
-              <body>
-                ${printContents}
-                <script>
-                  window.onload = function() { window.print(); window.close(); }
-                </script>
-              </body>
-            </html>
-          `);
-          printWindow.document.close();
-        }
-      }
-    }
-  };
+
+
 
   return (
     <div>
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Activity Reports</h1>
-        <p className="text-gray-500 mt-1">Select logged marketer activities and generate official report summaries.</p>
+      <header className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Activity Reports</h1>
+          <p className="text-gray-500 mt-1">Select logged marketer activities and generate official report summaries.</p>
+        </div>
+        <button
+          onClick={() => {
+            handleResetForm();
+            setIsFormModalOpen(true);
+          }}
+          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white dark:bg-white dark:text-black px-4 py-2.5 rounded-lg font-semibold text-sm transition-colors cursor-pointer shadow-xs whitespace-nowrap self-start sm:self-auto"
+        >
+          <Plus className="w-4 h-4" />
+          Generate Report
+        </button>
       </header>
 
       {loading ? (
         <div className="flex justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
         </div>
-      ) : activities.length === 0 ? (
-        <div className="bg-white dark:bg-black p-12 rounded-xl border border-gray-200 dark:border-gray-800 text-center max-w-2xl mx-auto">
-          <FileText className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">No activities logged yet</h3>
-          <p className="text-gray-500 mt-1 mb-6">You must log an activity on the dashboard before you can generate a report.</p>
-          <Link
-            href="/marketer"
-            className="inline-flex items-center gap-2 bg-black text-white dark:bg-white dark:text-black px-5 py-2.5 rounded-lg font-medium hover:opacity-90 transition-opacity"
-          >
-            Go to Activity Logger
-          </Link>
-        </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="w-full">
 
-          {/* Left Column - Report Creation Form */}
-          <div className="lg:col-span-5 h-fit">
-            <div className="bg-white dark:bg-zinc-950 p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs sticky top-8">
-              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+      {/* REPORT GENERATION / EDIT FORM MODAL */}
+      {isFormModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-zinc-950 rounded-xl border border-gray-200 dark:border-gray-800 w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+              <h2 className="text-lg font-bold flex items-center gap-2">
                 <FileText className="w-5 h-5 text-gray-650 dark:text-gray-400" />
                 {editReportId ? "Edit Submitted Report" : "Generate New Report"}
               </h2>
+              <button
+                type="button"
+                onClick={handleResetForm}
+                className="p-1.5 hover:bg-gray-100 dark:hover:bg-zinc-900 rounded-lg transition-colors text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-              <form onSubmit={handleSubmitReport} className="space-y-4">
+            {/* Modal Form */}
+            <form onSubmit={handleSubmitReport} className="flex flex-col flex-1 overflow-hidden">
+              {/* Modal Body (Scrollable) */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
 
-                {/* Select Activity */}
+                {/* Select Activity Type */}
                 <div>
                   <label className="block text-sm font-semibold mb-1.5 text-gray-700 dark:text-gray-300">
-                    Select Logged Activity <span className="text-red-500">*</span>
+                    Activity Type <span className="text-red-500">*</span>
                   </label>
                   <select
-                    value={selectedActivityId}
-                    onChange={(e) => setSelectedActivityId(e.target.value)}
-                    className="w-full border border-gray-200 dark:border-gray-800 bg-white dark:bg-zinc-900 px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white text-sm"
+                    value={activityType}
+                    onChange={handleActivityTypeChange}
+                    disabled={!!editReportId}
+                    className="w-full border border-gray-200 dark:border-gray-800 bg-white dark:bg-zinc-900 px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 dark:focus:ring-white text-sm disabled:opacity-60"
                     required
                   >
-                    {activities.map((act) => (
-                      <option key={act.id} value={act.id}>
-                        {act.activityType} - {getPrimaryName(act)} ({act.location || "No Location"})
-                      </option>
+                    <option value="">Select Activity Type...</option>
+                    {ACTIVITY_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
                     ))}
                   </select>
                 </div>
 
-                {/* Selected Activity Details Card */}
-                {selectedActivity && (
-                  <div className="p-4 bg-gray-50 dark:bg-zinc-900/40 rounded-lg border border-gray-150 dark:border-gray-800/60 text-xs space-y-2">
-                    <p className="font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider text-[10px]">Activity Preview</p>
+                {/* Dynamic Fields Section */}
+                {activityType && (
+                  <div className="space-y-4 pt-4 border-t border-gray-150 dark:border-gray-800/80 transition-all duration-300">
+                    
+                    {/* MEETINGS WITH INSTITUTES */}
+                    {activityType === "Meetings with Institutes" && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Institution Name *</label>
+                            <input
+                              type="text"
+                              value={formData.institutionName || ""}
+                              onChange={(e) => handleInputChange("institutionName", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
+                            <input
+                              type="text"
+                              value={formData.location || ""}
+                              onChange={(e) => handleInputChange("location", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Final Year Students</label>
+                            <input
+                              type="number"
+                              value={formData.finalYearStudents || ""}
+                              onChange={(e) => handleInputChange("finalYearStudents", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Head of Institute</label>
+                            <input
+                              type="text"
+                              value={formData.headOfInstitute || ""}
+                              onChange={(e) => handleInputChange("headOfInstitute", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Head Contact</label>
+                            <input
+                              type="tel"
+                              value={formData.headContact || ""}
+                              onChange={(e) => handleInputChange("headContact", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">SPOC from Institute</label>
+                            <input
+                              type="text"
+                              value={formData.spocName || ""}
+                              onChange={(e) => handleInputChange("spocName", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">SPOC Contact</label>
+                            <input
+                              type="tel"
+                              value={formData.spocContact || ""}
+                              onChange={(e) => handleInputChange("spocContact", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">SPOC Email</label>
+                            <input
+                              type="email"
+                              value={formData.spocEmail || ""}
+                              onChange={(e) => handleInputChange("spocEmail", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* FOLLOW UP WITH INSTITUTES */}
+                    {activityType === "Follow up with Institutes" && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Institution Name *</label>
+                            <input
+                              type="text"
+                              value={formData.institutionName || ""}
+                              onChange={(e) => handleInputChange("institutionName", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
+                            <input
+                              type="text"
+                              value={formData.location || ""}
+                              onChange={(e) => handleInputChange("location", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Date *</label>
+                            <input
+                              type="date"
+                              value={formData.date || ""}
+                              onChange={(e) => handleInputChange("date", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Mode of Meeting</label>
+                            <input
+                              type="text"
+                              value={formData.modeOfMeeting || ""}
+                              placeholder="e.g. In Person, Phone, Email, Video Call"
+                              onChange={(e) => handleInputChange("modeOfMeeting", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Feedback from Client *</label>
+                            <textarea
+                              rows={3}
+                              value={formData.clientFeedback || ""}
+                              onChange={(e) => handleInputChange("clientFeedback", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white resize-y"
+                              required
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* CAMPAIGNS CONDUCTED */}
+                    {activityType === "Campaigns Conducted" && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Institution Name *</label>
+                            <input
+                              type="text"
+                              value={formData.institutionName || ""}
+                              onChange={(e) => handleInputChange("institutionName", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
+                            <input
+                              type="text"
+                              value={formData.location || ""}
+                              onChange={(e) => handleInputChange("location", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Students Attended</label>
+                            <input
+                              type="number"
+                              value={formData.studentsAttended || ""}
+                              onChange={(e) => handleInputChange("studentsAttended", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Students Registered</label>
+                            <input
+                              type="number"
+                              value={formData.studentsRegistered || ""}
+                              onChange={(e) => handleInputChange("studentsRegistered", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">List of Students Captured</label>
+                            <textarea
+                              rows={4}
+                              placeholder="Enter captured students details (names, contacts, emails...)"
+                              value={formData.studentsCapturedList || ""}
+                              onChange={(e) => handleInputChange("studentsCapturedList", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white resize-y"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* PARTICIPATION IN CONFERENCES */}
+                    {activityType === "Participation in Conferences" && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Conference Name *</label>
+                            <input
+                              type="text"
+                              value={formData.conferenceName || ""}
+                              onChange={(e) => handleInputChange("conferenceName", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
+                            <input
+                              type="text"
+                              value={formData.location || ""}
+                              onChange={(e) => handleInputChange("location", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Target Professionals</label>
+                            <input
+                              type="text"
+                              value={formData.targetProfessionals || ""}
+                              placeholder="e.g. Doctors, Nurses, Managers"
+                              onChange={(e) => handleInputChange("targetProfessionals", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Number of Participants</label>
+                            <input
+                              type="number"
+                              value={formData.conferenceParticipants || ""}
+                              onChange={(e) => handleInputChange("conferenceParticipants", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Footfalls</label>
+                            <input
+                              type="number"
+                              value={formData.footfalls || ""}
+                              onChange={(e) => handleInputChange("footfalls", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Number of Registrations</label>
+                            <input
+                              type="number"
+                              value={formData.registrationsCount || ""}
+                              onChange={(e) => handleInputChange("registrationsCount", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* MEETINGS WITH HOSPITALS */}
+                    {activityType === "Meetings with Hospitals" && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Hospital Name *</label>
+                            <input
+                              type="text"
+                              value={formData.hospitalName || ""}
+                              onChange={(e) => handleInputChange("hospitalName", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
+                            <input
+                              type="text"
+                              value={formData.location || ""}
+                              onChange={(e) => handleInputChange("location", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Number of Beds</label>
+                            <input
+                              type="number"
+                              value={formData.bedsCount || ""}
+                              onChange={(e) => handleInputChange("bedsCount", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Number of Employees</label>
+                            <input
+                              type="number"
+                              value={formData.employeesCount || ""}
+                              onChange={(e) => handleInputChange("employeesCount", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Head of Hospital</label>
+                            <input
+                              type="text"
+                              value={formData.headOfHospital || ""}
+                              onChange={(e) => handleInputChange("headOfHospital", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Contact</label>
+                            <input
+                              type="tel"
+                              value={formData.contact || ""}
+                              onChange={(e) => handleInputChange("contact", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Head of HR</label>
+                            <input
+                              type="text"
+                              value={formData.headOfHR || ""}
+                              onChange={(e) => handleInputChange("headOfHR", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">HR Contact</label>
+                            <input
+                              type="tel"
+                              value={formData.hrContact || ""}
+                              onChange={(e) => handleInputChange("hrContact", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">HR Email</label>
+                            <input
+                              type="email"
+                              value={formData.hrEmail || ""}
+                              onChange={(e) => handleInputChange("hrEmail", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* FOLLOW UP WITH HOSPITALS */}
+                    {activityType === "Follow up with Hospitals" && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Institution/Hospital Name *</label>
+                            <input
+                              type="text"
+                              value={formData.hospitalOrInstitutionName || ""}
+                              onChange={(e) => handleInputChange("hospitalOrInstitutionName", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
+                            <input
+                              type="text"
+                              value={formData.location || ""}
+                              onChange={(e) => handleInputChange("location", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Date *</label>
+                            <input
+                              type="date"
+                              value={formData.date || ""}
+                              onChange={(e) => handleInputChange("date", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Mode of Meeting</label>
+                            <input
+                              type="text"
+                              value={formData.modeOfMeeting || ""}
+                              placeholder="e.g. Email, Call, Onsite"
+                              onChange={(e) => handleInputChange("modeOfMeeting", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Feedback from Client *</label>
+                            <textarea
+                              rows={3}
+                              value={formData.clientFeedback || ""}
+                              onChange={(e) => handleInputChange("clientFeedback", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white resize-y"
+                              required
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* SHARED FIELDS FOR ALL ACTIVITIES */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-dashed border-gray-200 dark:border-gray-800">
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Cost of Visit (₹)</label>
+                        <input
+                          type="number"
+                          value={formData.costOfVisit || ""}
+                          onChange={(e) => handleInputChange("costOfVisit", e.target.value)}
+                          placeholder="0"
+                          className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Marketing Observation</label>
+                        <textarea
+                          rows={3}
+                          value={formData.marketingObservation || ""}
+                          onChange={(e) => handleInputChange("marketingObservation", e.target.value)}
+                          className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white resize-y"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Selected Activity Details Card (Live Preview) */}
+                {selectedActivity && getPrimaryName(formData) !== "N/A" && (
+                  <div className="p-4 bg-gray-50 dark:bg-zinc-900/40 rounded-lg border border-gray-150 dark:border-gray-800/60 text-xs space-y-2 animate-none">
+                    <p className="font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider text-[10px]">Activity Preview (Live)</p>
                     <div className="flex items-center gap-2 font-bold text-sm text-gray-900 dark:text-gray-150 mt-1">
                       <Building2 className="w-3.5 h-3.5" />
                       {getPrimaryName(selectedActivity)}
@@ -492,115 +890,87 @@ export default function ReportsPage() {
                         <MapPin className="w-3 h-3" />
                         {selectedActivity.location || "N/A"}
                       </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {selectedActivity.date || "No Date"}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <IndianRupee className="w-3 h-3" />
-                        Cost: ₹{Number(selectedActivity.costOfVisit || 0).toLocaleString()}
-                      </span>
-                      <span className="flex items-center gap-1 col-span-2">
-                        <Clock className="w-3 h-3" />
-                        Logged: {selectedActivity.createdAt ? new Date(selectedActivity.createdAt.toMillis()).toLocaleDateString() : "Just now"}
-                      </span>
-                    </div>
-
-                    {/* Conditional sub-details */}
-                    <div className="pt-2 border-t border-dashed border-gray-200 dark:border-gray-800 space-y-1">
-                      {selectedActivity.spocName && (
-                        <div><span className="font-semibold">SPOC:</span> {selectedActivity.spocName} {selectedActivity.spocContact && `(${selectedActivity.spocContact})`}</div>
+                      {selectedActivity.date && (
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {selectedActivity.date}
+                        </span>
                       )}
-                      {selectedActivity.headOfInstitute && (
-                        <div><span className="font-semibold">Head of Institute:</span> {selectedActivity.headOfInstitute}</div>
-                      )}
-                      {selectedActivity.headOfHospital && (
-                        <div><span className="font-semibold">Head of Hospital:</span> {selectedActivity.headOfHospital}</div>
-                      )}
-                      {selectedActivity.finalYearStudents !== undefined && (
-                        <div><span className="font-semibold">Final Year Students:</span> {selectedActivity.finalYearStudents}</div>
-                      )}
-                      {selectedActivity.bedsCount !== undefined && (
-                        <div><span className="font-semibold">Hospital Beds:</span> {selectedActivity.bedsCount}</div>
-                      )}
-                      {selectedActivity.studentsAttended !== undefined && (
-                        <div><span className="font-semibold">Students Attended:</span> {selectedActivity.studentsAttended}</div>
-                      )}
-                      {selectedActivity.conferenceParticipants !== undefined && (
-                        <div><span className="font-semibold">Conference Participants:</span> {selectedActivity.conferenceParticipants}</div>
+                      {selectedActivity.costOfVisit && (
+                        <span className="flex items-center gap-1">
+                          <IndianRupee className="w-3 h-3" />
+                          Cost: ₹{Number(selectedActivity.costOfVisit || 0).toLocaleString()}
+                        </span>
                       )}
                     </div>
                   </div>
                 )}
 
-                {/* Executive Summary */}
-                <div>
-                  <label className="block text-sm font-semibold mb-1.5 text-gray-700 dark:text-gray-300">
-                    Report Executive Summary <span className="text-red-500">*</span>
-                  </label>
-                  <textarea
-                    value={content}
-                    onChange={(e) => setContent(e.target.value)}
-                    className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white h-32 resize-y text-sm"
-                    placeholder="Provide detailed outcomes, meeting achievements, and next actionable steps..."
-                    required
-                  />
-                </div>
 
-                {/* Optional Attachment */}
-                <div>
-                  <label className="block text-sm font-semibold mb-1.5 text-gray-700 dark:text-gray-300">
-                    Document/Photo Attachment <span className="text-gray-400 font-normal">(Optional)</span>
-                  </label>
-                  <input
-                    type="file"
-                    onChange={handleFileChange}
-                    className="w-full text-xs text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-gray-100 dark:file:bg-zinc-800 dark:file:text-white file:text-black hover:file:bg-gray-200 transition-colors"
-                  />
-                </div>
 
-                {isSubmitting && uploadProgress > 0 && (
-                  <div className="w-full bg-gray-250 dark:bg-zinc-800 rounded-full h-2 mt-2">
-                    <div className="bg-black dark:bg-white h-2 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
+                {errorMessage && (
+                  <div className="p-3.5 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/30 text-red-650 dark:text-red-400 text-xs rounded-lg font-semibold leading-relaxed">
+                    ⚠️ {errorMessage}
                   </div>
                 )}
 
-                <div className="flex gap-2.5 mt-4">
-                  <button
-                    type="submit"
-                    disabled={isSubmitting || activities.length === 0}
-                    className="flex-1 bg-black text-white dark:bg-white dark:text-black py-2.5 rounded-lg font-semibold text-sm hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        {uploadProgress > 0 ? "Uploading Attachment..." : "Saving..."}
-                      </>
-                    ) : (
-                      <>
-                        <Printer className="w-4 h-4" />
-                        {editReportId ? "Update Report" : "Generate & Submit Report"}
-                      </>
-                    )}
-                  </button>
-                  {editReportId && (
-                    <button
-                      type="button"
-                      onClick={handleResetForm}
-                      className="px-4 py-2.5 border border-gray-200 dark:border-gray-800 hover:bg-gray-150 dark:hover:bg-zinc-900 rounded-lg text-sm font-semibold transition-colors"
-                    >
-                      Cancel
-                    </button>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-zinc-900/10 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleResetForm}
+                  className="px-4 py-2.5 border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-zinc-900 rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !activityType}
+                  className="bg-blue-600 hover:bg-blue-700 text-white dark:bg-white dark:text-black px-5 py-2.5 rounded-lg font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="w-4 h-4" />
+                      {editReportId ? "Update Report" : "Generate & Submit Report"}
+                    </>
                   )}
-                </div>
-              </form>
-            </div>
+                </button>
+              </div>
+            </form>
           </div>
+        </div>
+      )}
 
-          {/* Right Column - Submitted Reports List */}
-          <div className="lg:col-span-7">
-            <div className="bg-white dark:bg-zinc-950 p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs">
-              <h2 className="text-xl font-bold tracking-tight mb-6">Generated Reports</h2>
+      {/* Submitted Reports List (Full Width) */}
+      <div>
+        <div className="bg-white dark:bg-zinc-950 p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
+                <h2 className="text-xl font-bold tracking-tight">Generated Reports</h2>
+                {/* Filter Option */}
+                <div className="flex items-center gap-2">
+                  <label htmlFor="filterActivity" className="text-xs font-semibold text-gray-500 uppercase whitespace-nowrap">
+                    Filter by:
+                  </label>
+                  <select
+                    id="filterActivity"
+                    value={filterActivityType}
+                    onChange={(e) => setFilterActivityType(e.target.value)}
+                    className="border border-gray-200 dark:border-gray-800 bg-white dark:bg-zinc-900 px-3 py-1.5 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white text-xs font-semibold cursor-pointer max-w-[200px] truncate"
+                  >
+                    <option value="all">All Activity Types</option>
+                    {ACTIVITY_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
               {reports.length === 0 ? (
                 <div className="bg-white dark:bg-black p-12 rounded-lg border border-gray-200 dark:border-gray-800 text-center">
@@ -608,9 +978,15 @@ export default function ReportsPage() {
                   <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">No reports generated yet</h3>
                   <p className="text-gray-500 mt-1">Submit the report form on the left to generate activity summaries.</p>
                 </div>
+              ) : getFilteredReports().length === 0 ? (
+                <div className="bg-white dark:bg-black p-12 rounded-lg border border-gray-200 dark:border-gray-800 text-center">
+                  <FileText className="w-12 h-12 mx-auto text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">No matching reports</h3>
+                  <p className="text-gray-500 mt-1">There are no generated reports with the activity type &quot;{filterActivityType}&quot;.</p>
+                </div>
               ) : (
                 <div className="space-y-4">
-                  {reports.map((report) => (
+                  {getFilteredReports().map((report) => (
                     <div key={report.id} className="bg-white dark:bg-zinc-950 p-5 rounded-xl border border-gray-200 dark:border-gray-800 hover:border-gray-350 dark:hover:border-zinc-700 transition-colors">
                       <div className="flex justify-between items-start mb-3 gap-2">
                         <div>
@@ -628,24 +1004,20 @@ export default function ReportsPage() {
                           ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/20 dark:text-blue-400 border-blue-200/50 dark:border-blue-900/30'
                           : report.status === 'Submitted'
                             ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400 border-amber-200/50 dark:border-amber-900/30'
-                            : 'bg-gray-55 text-gray-700 dark:bg-zinc-900 dark:text-gray-300 border-gray-200 dark:border-gray-800'
+                            : 'bg-gray-100 text-gray-700 dark:bg-zinc-900 dark:text-gray-300 border-gray-200 dark:border-gray-800'
                           }`}>
                           {report.status || 'Draft'}
                         </span>
                       </div>
 
-                      <p className="text-gray-600 dark:text-gray-400 text-sm mb-4 line-clamp-3 bg-gray-50 dark:bg-zinc-900/30 p-3 rounded-lg border border-gray-100 dark:border-gray-900">
-                        {report.content}
-                      </p>
-
                       <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-100 dark:border-gray-900">
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => triggerPrintModal(report)}
-                            className="inline-flex items-center gap-1.5 text-xs font-semibold border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-zinc-900 text-gray-700 dark:text-gray-300 rounded-lg px-3 py-1.5 transition-colors"
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-zinc-900 text-gray-700 dark:text-gray-300 rounded-lg px-3 py-1.5 transition-colors cursor-pointer"
                           >
-                            <Printer className="w-3.5 h-3.5" />
-                            View / Print PDF
+                            <Eye className="w-3.5 h-3.5" />
+                            View Preview
                           </button>
 
                           {report.status === 'Draft' || !report.status ? (
@@ -746,64 +1118,63 @@ export default function ReportsPage() {
 
       {/* PRINT PREVIEW DIALOG MODAL */}
       {isPrintModalOpen && selectedReportForPrint && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-zinc-950 rounded-xl border border-gray-250 dark:border-gray-800 w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
+          <div className="bg-zinc-900 rounded-xl border border-zinc-800 w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl text-zinc-100">
 
             {/* Modal Header */}
-            <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-zinc-900/50">
-              <h3 className="font-bold text-base text-gray-900 dark:text-gray-100">Report Document Generator</h3>
-              <button
-                onClick={() => setIsPrintModalOpen(false)}
-                className="p-1 hover:bg-gray-200 dark:hover:bg-zinc-800 rounded-full transition-colors text-gray-500 hover:text-black dark:hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
+            <div className="flex items-center px-6 py-4 border-b border-zinc-800 bg-zinc-950/80">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-350">
+                Report Preview
+              </h3>
             </div>
 
-            {/* Scrollable Printable Document Preview Area */}
-            <div className="flex-1 overflow-y-auto p-8" ref={printAreaRef}>
+            {/* Scrollable Printable Document Preview Area - PDF Canvas */}
+            <div className="flex-1 overflow-y-auto p-8 bg-zinc-800/40" ref={printAreaRef}>
               {(() => {
                 const details = selectedReportForPrint.activityDetails || selectedActivityForPrint || {};
                 return (
-                  <div className="max-w-2xl mx-auto space-y-6 text-black">
+                  <div 
+                    className="w-full max-w-[760px] bg-white shadow-[0_12px_40px_rgba(0,0,0,0.35)] border border-zinc-200 rounded-sm p-12 mx-auto space-y-8 text-left"
+                    style={{ backgroundColor: '#ffffff', color: '#18181b', minHeight: '800px' }}
+                  >
                     {/* Document Header */}
-                    <div className="border-b-2 border-black pb-4 flex justify-between items-start">
+                    <div className="border-b-2 border-zinc-900 pb-5 flex justify-between items-start">
                       <div>
-                        <h2 className="text-2xl font-extrabold uppercase tracking-tight text-black">Activity Performance Report</h2>
-                        <p className="text-xs text-gray-500 mt-1 uppercase font-semibold">Logged by Marketer: {user?.email || "Unknown Marketer"}</p>
+                        <h2 className="text-2xl font-black uppercase tracking-tight text-zinc-900">Activity Performance Report</h2>
+                        <p className="text-xs text-zinc-550 mt-1.5 uppercase font-bold tracking-wider">Logged by Marketer: {user?.email || "Unknown Marketer"}</p>
                       </div>
-                      <div className="text-right text-xs text-gray-500 font-medium">
-                        <div>REPORT ID: #{selectedReportForPrint.id.toUpperCase().substring(0, 8)}</div>
-                        <div>DATE: {selectedReportForPrint.createdAt ? new Date(selectedReportForPrint.createdAt.toMillis()).toLocaleDateString() : 'Just now'}</div>
+                      <div className="text-right text-xs text-zinc-550 font-bold tracking-tight">
+                        <div className="text-zinc-900">REPORT ID: #{selectedReportForPrint.id.toUpperCase().substring(0, 12)}</div>
+                        <div className="mt-1 text-zinc-500">DATE: {selectedReportForPrint.createdAt ? new Date(selectedReportForPrint.createdAt.toMillis()).toLocaleDateString("en-IN", { day: '2-digit', month: 'short', year: 'numeric' }) : 'Just now'}</div>
                       </div>
                     </div>
 
                     {/* Section 1: Activity Classification */}
-                    <div>
-                      <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest border-b border-gray-200 pb-1 mb-3">Activity Information</h4>
-                      <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-sm">
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-200 pb-1">Activity Information</h4>
+                      <div className="grid grid-cols-2 gap-y-4 gap-x-8 text-sm">
                         <div>
-                          <div className="text-[10px] uppercase font-bold text-gray-500">Activity Classification</div>
-                          <div className="font-bold text-black text-base mt-0.5">{selectedReportForPrint.activityType}</div>
+                          <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Activity Classification</div>
+                          <div className="font-extrabold text-zinc-900 text-base mt-1">{selectedReportForPrint.activityType}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase font-bold text-gray-500">Institution/Hospital Name</div>
-                          <div className="font-bold text-black text-base mt-0.5">{selectedReportForPrint.activityName}</div>
+                          <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Institution/Hospital Name</div>
+                          <div className="font-extrabold text-zinc-900 text-base mt-1">{selectedReportForPrint.activityName}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase font-bold text-gray-500">Location</div>
-                          <div className="font-medium mt-0.5">{details.location || "N/A"}</div>
+                          <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Location</div>
+                          <div className="font-semibold text-zinc-800 mt-1">{details.location || "N/A"}</div>
                         </div>
                         {details.date && (
                           <div>
-                            <div className="text-[10px] uppercase font-bold text-gray-500">Date of Meeting/Visit</div>
-                            <div className="font-medium mt-0.5">{details.date}</div>
+                            <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Date of Meeting/Visit</div>
+                            <div className="font-semibold text-zinc-800 mt-1">{details.date}</div>
                           </div>
                         )}
                         {details.costOfVisit !== undefined && (
                           <div>
-                            <div className="text-[10px] uppercase font-bold text-gray-500">Cost of Visit</div>
-                            <div className="font-medium mt-0.5">₹{Number(details.costOfVisit).toLocaleString()}</div>
+                            <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Cost of Visit</div>
+                            <div className="font-bold text-zinc-900 text-base mt-1">₹{Number(details.costOfVisit).toLocaleString()}</div>
                           </div>
                         )}
                       </div>
@@ -811,103 +1182,103 @@ export default function ReportsPage() {
 
                     {/* Section 2: Specific Activity Custom Fields */}
                     {Object.keys(details).length > 0 && (
-                      <div>
-                        <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest border-b border-gray-200 pb-1 mb-3">Logged Details & Parameters</h4>
-                        <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-sm">
+                      <div className="space-y-4">
+                        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-200 pb-1">Logged Details & Parameters</h4>
+                        <div className="grid grid-cols-2 gap-y-4 gap-x-8 text-sm">
 
                           {/* Institute meeting/followup details */}
                           {details.headOfInstitute && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Head of Institute</div>
-                              <div className="font-semibold mt-0.5">{details.headOfInstitute} {details.headContact && `(${details.headContact})`}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Head of Institute</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.headOfInstitute} {details.headContact && `(${details.headContact})`}</div>
                             </div>
                           )}
                           {details.spocName && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">SPOC Info</div>
-                              <div className="font-semibold mt-0.5">{details.spocName} {details.spocContact && `(${details.spocContact})`}</div>
-                              {details.spocEmail && <div className="text-xs text-gray-500">{details.spocEmail}</div>}
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">SPOC Info</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.spocName} {details.spocContact && `(${details.spocContact})`}</div>
+                              {details.spocEmail && <div className="text-xs text-zinc-500 mt-0.5">{details.spocEmail}</div>}
                             </div>
                           )}
                           {details.finalYearStudents !== undefined && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Number of Final Year Students</div>
-                              <div className="font-semibold mt-0.5">{details.finalYearStudents}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Number of Final Year Students</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.finalYearStudents}</div>
                             </div>
                           )}
 
                           {/* Campaign details */}
                           {details.studentsAttended !== undefined && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Students Attended</div>
-                              <div className="font-semibold mt-0.5">{details.studentsAttended}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Students Attended</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.studentsAttended}</div>
                             </div>
                           )}
                           {details.studentsRegistered !== undefined && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Students Registered</div>
-                              <div className="font-semibold mt-0.5">{details.studentsRegistered}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Students Registered</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.studentsRegistered}</div>
                             </div>
                           )}
 
                           {/* Conference details */}
                           {details.targetProfessionals && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Target Professionals</div>
-                              <div className="font-semibold mt-0.5">{details.targetProfessionals}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Target Professionals</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.targetProfessionals}</div>
                             </div>
                           )}
                           {details.conferenceParticipants !== undefined && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Conference Participants</div>
-                              <div className="font-semibold mt-0.5">{details.conferenceParticipants}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Conference Participants</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.conferenceParticipants}</div>
                             </div>
                           )}
                           {details.footfalls !== undefined && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Footfalls</div>
-                              <div className="font-semibold mt-0.5">{details.footfalls}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Footfalls</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.footfalls}</div>
                             </div>
                           )}
                           {details.registrationsCount !== undefined && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Conference Registrations</div>
-                              <div className="font-semibold mt-0.5">{details.registrationsCount}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Conference Registrations</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.registrationsCount}</div>
                             </div>
                           )}
 
                           {/* Hospital details */}
                           {details.headOfHospital && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Head of Hospital</div>
-                              <div className="font-semibold mt-0.5">{details.headOfHospital} {details.contact && `(${details.contact})`}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Head of Hospital</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.headOfHospital} {details.contact && `(${details.contact})`}</div>
                             </div>
                           )}
                           {details.headOfHR && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Head of HR</div>
-                              <div className="font-semibold mt-0.5">{details.headOfHR} {details.hrContact && `(${details.hrContact})`}</div>
-                              {details.hrEmail && <div className="text-xs text-gray-500">{details.hrEmail}</div>}
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Head of HR</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.headOfHR} {details.hrContact && `(${details.hrContact})`}</div>
+                              {details.hrEmail && <div className="text-xs text-zinc-550 mt-0.5">{details.hrEmail}</div>}
                             </div>
                           )}
                           {details.bedsCount !== undefined && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Hospital Beds</div>
-                              <div className="font-semibold mt-0.5">{details.bedsCount}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Hospital Beds</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.bedsCount}</div>
                             </div>
                           )}
                           {details.employeesCount !== undefined && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Hospital Employees</div>
-                              <div className="font-semibold mt-0.5">{details.employeesCount}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Hospital Employees</div>
+                              <div className="font-bold text-zinc-900 mt-1">{details.employeesCount}</div>
                             </div>
                           )}
 
                           {/* Shared details */}
                           {details.modeOfMeeting && (
                             <div>
-                              <div className="text-[10px] uppercase font-bold text-gray-500">Mode of Meeting</div>
-                              <div className="font-semibold mt-0.5">{details.modeOfMeeting}</div>
+                              <div className="text-[10px] uppercase font-bold text-zinc-450 tracking-wider">Mode of Meeting</div>
+                              <div className="font-semibold text-zinc-800 mt-1">{details.modeOfMeeting}</div>
                             </div>
                           )}
                         </div>
@@ -916,48 +1287,103 @@ export default function ReportsPage() {
 
                     {/* Section 3: Client Feedback & Observations from Activity */}
                     {(details.clientFeedback || details.marketingObservation || details.studentsCapturedList) && (
-                      <div>
-                        <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest border-b border-gray-200 pb-1 mb-3">Observations from Activity Log</h4>
-                        <div className="space-y-3 text-sm text-black">
+                      <div className="space-y-4">
+                        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-200 pb-1">Observations from Activity Log</h4>
+                        <div className="space-y-4 text-sm">
                           {details.clientFeedback && (
-                            <div>
-                              <span className="font-bold text-gray-650">Client Feedback:</span>
-                              <p className="mt-1 text-gray-850 whitespace-pre-wrap">{details.clientFeedback}</p>
+                            <div className="bg-zinc-50 p-4 rounded-md border border-zinc-150">
+                              <span className="font-bold text-zinc-850 block mb-1 text-[11px] uppercase tracking-wider">Client Feedback:</span>
+                              <p className="text-zinc-800 whitespace-pre-wrap leading-relaxed">{details.clientFeedback}</p>
                             </div>
                           )}
                           {details.marketingObservation && (
-                            <div>
-                              <span className="font-bold text-gray-650">Marketing Observations:</span>
-                              <p className="mt-1 text-gray-850 whitespace-pre-wrap">{details.marketingObservation}</p>
+                            <div className="bg-zinc-50 p-4 rounded-md border border-zinc-150">
+                              <span className="font-bold text-zinc-850 block mb-1 text-[11px] uppercase tracking-wider">Marketing Observations:</span>
+                              <p className="text-zinc-800 whitespace-pre-wrap leading-relaxed">{details.marketingObservation}</p>
                             </div>
                           )}
                           {details.studentsCapturedList && (
-                            <div>
-                              <span className="font-bold text-gray-650">Captured Students List:</span>
-                              <p className="mt-1 text-gray-850 whitespace-pre-wrap">{details.studentsCapturedList}</p>
+                            <div className="bg-zinc-50 p-4 rounded-md border border-zinc-150">
+                              <span className="font-bold text-zinc-850 block mb-1 text-[11px] uppercase tracking-wider">Captured Students List:</span>
+                              <p className="text-zinc-800 whitespace-pre-wrap leading-relaxed font-mono text-xs">{details.studentsCapturedList}</p>
                             </div>
                           )}
                         </div>
                       </div>
                     )}
 
-                    {/* Section 4: Report Executive Summary */}
-                    <div>
-                      <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest border-b border-gray-200 pb-1 mb-3">Report Executive Summary</h4>
-                      <div className="bg-gray-50 p-5 rounded-lg border border-gray-200 text-sm text-black whitespace-pre-wrap leading-relaxed">
-                        {selectedReportForPrint.content}
+                    {/* Section 4: Attached Documentation/Media */}
+                    {selectedReportForPrint.fileUrl && (
+                      <div className="space-y-4">
+                        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-200 pb-1">
+                          Attached Documentation / Media
+                        </h4>
+                        {(() => {
+                          const fileName = selectedReportForPrint.fileName || "";
+                          const fileUrl = selectedReportForPrint.fileUrl;
+                          const isImage = /\.(jpe?g|png|gif|webp|bmp)$/i.test(fileName) || fileUrl.includes(".jpg") || fileUrl.includes(".png") || fileUrl.includes(".jpeg") || fileUrl.includes(".webp");
+                          
+                          if (isImage) {
+                            return (
+                              <div className="border border-zinc-200 rounded-lg p-3 bg-zinc-50 flex flex-col items-center justify-center gap-2">
+                                <div className="text-[10px] text-zinc-450 uppercase font-bold tracking-wider self-start">
+                                  Image Attachment Preview ({fileName || "Attachment"})
+                                </div>
+                                <a href={fileUrl} target="_blank" rel="noopener noreferrer" title="View full size image" className="group relative block overflow-hidden rounded border border-zinc-200 bg-white">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img 
+                                    src={fileUrl} 
+                                    alt={fileName || "Attachment"} 
+                                    className="max-h-[250px] w-auto object-contain mx-auto transition-transform hover:scale-[1.02] duration-300"
+                                  />
+                                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 flex items-center justify-center transition-colors">
+                                    <span className="bg-black/60 text-white text-[11px] px-2.5 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity font-semibold">
+                                      Open Full Image ↗
+                                    </span>
+                                  </div>
+                                </a>
+                              </div>
+                            );
+                          } else {
+                            return (
+                              <div className="border border-zinc-200 rounded-lg p-4 bg-zinc-50 flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2.5 bg-red-50 text-red-650 rounded-lg border border-red-100 flex-shrink-0">
+                                    <FileText className="w-6 h-6" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-bold text-zinc-900 truncate">
+                                      {fileName || "Attached Document"}
+                                    </p>
+                                    <p className="text-xs text-zinc-550 font-medium">
+                                      Click to view or download the attached document
+                                    </p>
+                                  </div>
+                                </div>
+                                <a 
+                                  href={fileUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="inline-flex items-center gap-1.5 text-xs font-bold bg-zinc-900 hover:bg-zinc-800 text-white px-3.5 py-2 rounded-lg transition-colors shadow-sm cursor-pointer whitespace-nowrap"
+                                >
+                                  View Document ↗
+                                </a>
+                              </div>
+                            );
+                          }
+                        })()}
                       </div>
-                    </div>
+                    )}
 
                     {/* Section 5: Signature Blocks */}
-                    <div className="pt-12 grid grid-cols-2 gap-12 text-center text-xs">
+                    <div className="pt-12 grid grid-cols-2 gap-12 text-center text-xs border-t border-dashed border-zinc-200">
                       <div>
-                        <div className="border-t border-black pt-2 mx-auto w-48 font-semibold uppercase text-black">Marketer Signature</div>
-                        <div className="text-[10px] text-gray-400 mt-1">{user?.email}</div>
+                        <div className="border-t border-zinc-900 pt-2 mx-auto w-48 font-bold uppercase text-zinc-900">Marketer Signature</div>
+                        <div className="text-[10px] text-zinc-550 mt-1.5">{user?.email}</div>
                       </div>
                       <div>
-                        <div className="border-t border-black pt-2 mx-auto w-48 font-semibold uppercase text-black">Admin Approval Signature</div>
-                        <div className="text-[10px] text-gray-400 mt-1">Status: {selectedReportForPrint.status}</div>
+                        <div className="border-t border-zinc-900 pt-2 mx-auto w-48 font-bold uppercase text-zinc-900">Admin Approval Signature</div>
+                        <div className="text-[10px] text-zinc-550 mt-1.5">Status: <span className="font-bold text-zinc-800">{selectedReportForPrint.status}</span></div>
                       </div>
                     </div>
                   </div>
@@ -966,19 +1392,12 @@ export default function ReportsPage() {
             </div>
 
             {/* Modal Actions Footer */}
-            <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-zinc-900/50 flex justify-end gap-3">
+            <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-950/80 flex justify-end">
               <button
                 onClick={() => setIsPrintModalOpen(false)}
-                className="px-4 py-2 border border-gray-200 dark:border-gray-800 hover:bg-gray-150 dark:hover:bg-zinc-900 rounded-lg text-sm font-semibold transition-colors"
+                className="px-5 py-2.5 bg-zinc-800 text-zinc-200 hover:bg-zinc-700 hover:text-white border border-zinc-700 rounded-lg text-sm font-semibold transition-colors cursor-pointer"
               >
                 Close Preview
-              </button>
-              <button
-                onClick={handlePrint}
-                className="px-4 py-2 bg-black text-white dark:bg-white dark:text-black rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                Print / Download PDF
               </button>
             </div>
 

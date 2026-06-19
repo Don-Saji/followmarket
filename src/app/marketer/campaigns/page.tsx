@@ -163,7 +163,7 @@ export default function CampaignsPage() {
         {activeTab === "campaigns" ? (
           <Link 
             href="/marketer/campaigns/new"
-            className="flex items-center justify-center gap-2 bg-black text-white dark:bg-white dark:text-black px-4 py-2.5 rounded-md font-medium hover:opacity-90 transition-opacity self-start md:self-auto"
+            className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white dark:bg-white dark:text-black px-4 py-2.5 rounded-md font-medium transition-colors self-start md:self-auto"
           >
             <PlusCircle className="w-4 h-4" />
             New Campaign
@@ -177,7 +177,7 @@ export default function CampaignsPage() {
           onClick={() => setActiveTab("campaigns")}
           className={`flex items-center gap-2 px-6 py-3 border-b-2 font-medium text-sm transition-colors ${
             activeTab === "campaigns"
-              ? "border-black text-black dark:border-white dark:text-white"
+              ? "border-blue-600 text-blue-600 dark:border-white dark:text-white"
               : "border-transparent text-gray-500 hover:text-black dark:hover:text-white"
           }`}
         >
@@ -188,7 +188,7 @@ export default function CampaignsPage() {
           onClick={() => setActiveTab("audience")}
           className={`flex items-center gap-2 px-6 py-3 border-b-2 font-medium text-sm transition-colors ${
             activeTab === "audience"
-              ? "border-black text-black dark:border-white dark:text-white"
+              ? "border-blue-600 text-blue-600 dark:border-white dark:text-white"
               : "border-transparent text-gray-500 hover:text-black dark:hover:text-white"
           }`}
         >
@@ -211,7 +211,7 @@ export default function CampaignsPage() {
               <p className="text-gray-500 mt-1 mb-6">You haven&apos;t created any campaigns yet.</p>
               <Link 
                 href="/marketer/campaigns/new"
-                className="inline-flex items-center gap-2 bg-black text-white dark:bg-white dark:text-black px-4 py-2 rounded-md font-medium hover:opacity-90 transition-opacity"
+                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white dark:bg-white dark:text-black px-4 py-2 rounded-md font-medium transition-colors"
               >
                 Create your first campaign
               </Link>
@@ -270,7 +270,7 @@ export default function CampaignsPage() {
                     type="text"
                     value={audName}
                     onChange={(e) => setAudName(e.target.value)}
-                    className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white text-sm"
+                    className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 dark:focus:ring-white text-sm"
                     placeholder="e.g. Gen Z Gamers"
                     required
                   />
@@ -280,7 +280,7 @@ export default function CampaignsPage() {
                   <textarea
                     value={audDescription}
                     onChange={(e) => setAudDescription(e.target.value)}
-                    className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white h-24 resize-none text-sm"
+                    className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 dark:focus:ring-white h-24 resize-none text-sm"
                     placeholder="Targeting users aged 18-24 interested in gaming."
                     required
                   />
@@ -291,7 +291,7 @@ export default function CampaignsPage() {
                     type="number"
                     value={audSize}
                     onChange={(e) => setAudSize(e.target.value)}
-                    className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white text-sm"
+                    className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 dark:focus:ring-white text-sm"
                     placeholder="150000"
                     required
                   />
@@ -299,7 +299,7 @@ export default function CampaignsPage() {
                 <button
                   type="submit"
                   disabled={isSubmittingAudience}
-                  className="w-full bg-black text-white dark:bg-white dark:text-black py-2.5 rounded-md font-medium text-sm hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 transition-opacity"
+                  className="w-full bg-blue-600 text-white dark:bg-white dark:text-black py-2.5 rounded-md font-medium text-sm hover:bg-blue-700 dark:hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
                 >
                   {isSubmittingAudience && <Loader2 className="w-4 h-4 animate-spin" />}
                   Save Segment
@@ -323,7 +323,7 @@ export default function CampaignsPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {audiences.map((audience) => (
-                  <div key={audience.id} className="bg-white dark:bg-black p-6 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-black dark:hover:border-white transition-colors flex flex-col justify-between">
+                  <div key={audience.id} className="bg-white dark:bg-black p-6 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-blue-600 dark:hover:border-white transition-colors flex flex-col justify-between">
                     <div>
                       <div className="flex items-start justify-between mb-2 gap-2">
                         <h3 className="font-bold text-base leading-tight text-gray-900 dark:text-gray-100">{audience.name}</h3>

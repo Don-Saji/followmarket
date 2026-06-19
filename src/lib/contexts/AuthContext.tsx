@@ -30,13 +30,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
         setUser(firebaseUser);
-        
+
         // Use onSnapshot instead of getDoc so we receive the role right after it's created during registration
         unsubscribeSnapshot = onSnapshot(
           doc(db, "users", firebaseUser.uid),
           (userDoc) => {
             if (userDoc.exists()) {
-              setRole(userDoc.data().role as Role);
+              const userData = userDoc.data();
+              if (userData.status === "suspended") {
+                // If account is suspended, log out immediately
+                auth.signOut();
+                setUser(null);
+                setRole(null);
+              } else {
+                setRole(userData.role as Role);
+              }
             } else {
               setRole(null);
             }

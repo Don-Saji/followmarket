@@ -32,10 +32,17 @@ export default function LoginPage() {
       const loginEmail = email.toLowerCase() === "admin" ? "admin@market.com" : email;
       const userCredential = await signInWithEmailAndPassword(auth, loginEmail, password);
 
-      // Fetch role
+      // Fetch role & status
       const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
       if (userDoc.exists()) {
-        const role = userDoc.data().role;
+        const userData = userDoc.data();
+        if (userData.status === "suspended") {
+          await auth.signOut();
+          setError("Your account has been suspended. Please contact the administrator.");
+          return;
+        }
+
+        const role = userData.role;
         if (role === "admin") {
           router.push("/admin");
         } else {
@@ -218,10 +225,7 @@ export default function LoginPage() {
             </form>
 
             <p className="text-center text-sm mt-6 text-gray-500">
-              Don&apos;t have an account?{" "}
-              <Link href="/register" className="text-black dark:text-white underline underline-offset-4">
-                Register
-              </Link>
+              Need an account? Please contact your administrator.
             </p>
           </>
         )}

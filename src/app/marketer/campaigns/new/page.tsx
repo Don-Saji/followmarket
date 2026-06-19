@@ -100,7 +100,7 @@ export default function NewCampaignPage() {
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+                className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 dark:focus:ring-white"
                 placeholder="e.g. Summer Blowout Sale"
                 required
               />
@@ -112,7 +112,7 @@ export default function NewCampaignPage() {
                 type="number"
                 value={budget}
                 onChange={(e) => setBudget(e.target.value)}
-                className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+                className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 dark:focus:ring-white"
                 placeholder="5000"
                 required
               />
@@ -129,7 +129,7 @@ export default function NewCampaignPage() {
                 <select
                   value={audienceId}
                   onChange={(e) => setAudienceId(e.target.value)}
-                  className="w-full border border-gray-200 dark:border-gray-800 bg-white dark:bg-black px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+                  className="w-full border border-gray-200 dark:border-gray-800 bg-white dark:bg-black px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 dark:focus:ring-white"
                   required
                 >
                   {audiences.map((aud) => (
@@ -145,7 +145,7 @@ export default function NewCampaignPage() {
               <button
                 type="submit"
                 disabled={isSubmitting || audiences.length === 0}
-                className="w-full bg-black text-white dark:bg-white dark:text-black py-3 rounded-md font-medium hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 transition-opacity"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white dark:bg-white dark:text-black py-3 rounded-md font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
               >
                 {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
                 Submit for Approval
