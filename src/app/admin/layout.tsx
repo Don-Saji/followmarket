@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, PieChart, DollarSign, FileText, Bell, LogOut, Loader2, CheckCircle2, Trash2, X, Settings } from "lucide-react";
+import { Users, PieChart, DollarSign, FileText, Bell, LogOut, Loader2, CheckCircle2, Trash2, X, Settings, Briefcase } from "lucide-react";
 import { auth, db } from "@/lib/firebase/config";
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
@@ -103,6 +103,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { name: "Dashboard", href: "/admin", icon: PieChart },
     { name: "Reports", href: "/admin/reports", icon: FileText },
     { name: "Budget", href: "/admin/budget", icon: DollarSign },
+    { name: "Profiles", href: "/admin/profiles", icon: Briefcase },
     { name: "Users", href: "/admin/users", icon: Users },
   ];
 

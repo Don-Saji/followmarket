@@ -51,13 +51,21 @@ interface Report {
 const getTimestamp = () => Date.now();
 
 const ACTIVITY_TYPES = [
-  "Meetings with Institutes",
   "Follow up with Institutes",
   "Campaigns Conducted",
   "Participation in Conferences",
-  "Meetings with Hospitals",
   "Follow up with Hospitals"
 ];
+
+export interface EntityProfile {
+  id: string;
+  type: "Institute" | "Hospital";
+  name: string;
+  location: string;
+  marketerId: string;
+  createdAt?: { toMillis: () => number };
+  details: Record<string, any>;
+}
 
 export default function ReportsPage() {
   const { user } = useAuth();
@@ -81,6 +89,15 @@ export default function ReportsPage() {
   const [selectedActivityForPrint, setSelectedActivityForPrint] = useState<ActivityRecord | null>(null);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
+  // Profile State
+  const [profiles, setProfiles] = useState<EntityProfile[]>([]);
+  const [activeTab, setActiveTab] = useState<"Reports" | "Profiles">("Reports");
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileType, setProfileType] = useState<"Institute" | "Hospital" | "">("");
+  const [profileFormData, setProfileFormData] = useState<Record<string, any>>({});
+  const [isSubmittingProfile, setIsSubmittingProfile] = useState(false);
+  const [selectedProfileForView, setSelectedProfileForView] = useState<EntityProfile | null>(null);
+
   useEffect(() => {
     if (!user) return;
     let active = true;
@@ -101,11 +118,39 @@ export default function ReportsPage() {
           return bTime - aTime;
         });
 
+        // Fetch profiles
+        const profQ = query(
+          collection(db, "entity_profiles"),
+          where("marketerId", "==", user.uid)
+        );
+        const profSnap = await getDocs(profQ);
+        const profData = profSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as EntityProfile));
+
+        profData.sort((a, b) => {
+          const aTime = a.createdAt?.toMillis() || 0;
+          const bTime = b.createdAt?.toMillis() || 0;
+          return bTime - aTime;
+        });
+
+        // Merge profile details into past reports for complete viewing
+        repData.forEach(r => {
+          if (r.activityDetails && r.activityDetails.profileId) {
+            const prof = profData.find(p => p.id === r.activityDetails.profileId);
+            if (prof && prof.details) {
+              r.activityDetails = {
+                ...prof.details,
+                ...r.activityDetails
+              };
+            }
+          }
+        });
+
         if (active) {
           setReports(repData);
+          setProfiles(profData);
         }
       } catch (error) {
-        console.error("Error fetching report data:", error);
+        console.error("Error fetching data:", error);
       } finally {
         if (active) {
           setLoading(false);
@@ -123,6 +168,7 @@ export default function ReportsPage() {
   const getPrimaryName = (record: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (!record) return "N/A";
     return (
+      record.profileName ||
       record.institutionName ||
       record.hospitalName ||
       record.conferenceName ||
@@ -234,6 +280,44 @@ export default function ReportsPage() {
       ));
     } catch (error) {
       console.error("Error requesting report deletion:", error);
+    }
+  };
+
+  const handleSubmitProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !profileType) return;
+    
+    setIsSubmittingProfile(true);
+    setErrorMessage(null);
+    try {
+      const name = profileType === "Institute" ? profileFormData.institutionName : profileFormData.hospitalName;
+      
+      const payload = {
+        marketerId: user.uid,
+        type: profileType,
+        name: name || "Unknown",
+        location: profileFormData.location || "Unknown",
+        details: profileFormData,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      const docRef = await addDoc(collection(db, "entity_profiles"), payload);
+      const newProfile: EntityProfile = {
+        id: docRef.id,
+        ...payload,
+        createdAt: { toMillis: () => Date.now() }
+      } as any;
+
+      setProfiles(prev => [newProfile, ...prev]);
+      setIsProfileModalOpen(false);
+      setProfileType("");
+      setProfileFormData({});
+    } catch (error: any) {
+      console.error("Error creating profile:", error);
+      setErrorMessage(error.message || "Failed to create profile.");
+    } finally {
+      setIsSubmittingProfile(false);
     }
   };
 
@@ -370,22 +454,53 @@ export default function ReportsPage() {
 
   return (
     <div>
-      <header className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <header className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Activity Reports</h1>
-          <p className="text-gray-500 mt-1">Select logged marketer activities and generate official report summaries.</p>
+          <h1 className="text-3xl font-bold tracking-tight">Activity Reports & Profiles</h1>
+          <p className="text-gray-500 mt-1">Manage entity profiles and generate official report summaries.</p>
         </div>
-        <button
-          onClick={() => {
-            handleResetForm();
-            setIsFormModalOpen(true);
-          }}
-          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white dark:bg-white dark:text-black px-4 py-2.5 rounded-lg font-semibold text-sm transition-colors cursor-pointer shadow-xs whitespace-nowrap self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          Generate Report
-        </button>
+        
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={() => {
+              setProfileType("");
+              setProfileFormData({});
+              setIsProfileModalOpen(true);
+            }}
+            className="inline-flex items-center justify-center gap-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:text-zinc-200 px-4 py-2.5 rounded-lg font-semibold text-sm transition-colors cursor-pointer shadow-xs whitespace-nowrap"
+          >
+            <Building2 className="w-4 h-4" />
+            Create Profile
+          </button>
+          
+          <button
+            onClick={() => {
+              handleResetForm();
+              setIsFormModalOpen(true);
+            }}
+            className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white dark:bg-white dark:text-black px-4 py-2.5 rounded-lg font-semibold text-sm transition-colors cursor-pointer shadow-xs whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" />
+            Generate Report
+          </button>
+        </div>
       </header>
+
+      {/* TABS */}
+      <div className="flex items-center gap-4 mb-6 border-b border-gray-200 dark:border-gray-800">
+        <button
+          onClick={() => setActiveTab("Reports")}
+          className={`pb-3 text-sm font-semibold transition-colors border-b-2 ${activeTab === "Reports" ? "border-blue-600 text-blue-600 dark:border-white dark:text-white" : "border-transparent text-gray-500 hover:text-gray-800 dark:hover:text-gray-300"}`}
+        >
+          Activity Reports
+        </button>
+        <button
+          onClick={() => setActiveTab("Profiles")}
+          className={`pb-3 text-sm font-semibold transition-colors border-b-2 ${activeTab === "Profiles" ? "border-blue-600 text-blue-600 dark:border-white dark:text-white" : "border-transparent text-gray-500 hover:text-gray-800 dark:hover:text-gray-300"}`}
+        >
+          Entity Profiles
+        </button>
+      </div>
 
       {loading ? (
         <div className="flex justify-center py-24">
@@ -467,6 +582,16 @@ export default function ReportsPage() {
                             />
                           </div>
                           <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Date *</label>
+                            <input
+                              type="date"
+                              value={formData.date || ""}
+                              onChange={(e) => handleInputChange("date", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
                             <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Final Year Students</label>
                             <input
                               type="number"
@@ -529,14 +654,34 @@ export default function ReportsPage() {
                       <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="sm:col-span-2">
-                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Institution Name *</label>
-                            <input
-                              type="text"
-                              value={formData.institutionName || ""}
-                              onChange={(e) => handleInputChange("institutionName", e.target.value)}
-                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Select Institute Profile *</label>
+                            <select
+                              value={formData.profileId || ""}
+                              onChange={(e) => {
+                                const profId = e.target.value;
+                                const prof = profiles.find(p => p.id === profId);
+                                if (prof) {
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    profileId: profId,
+                                    profileName: prof.name,
+                                    location: prof.location,
+                                    ...prof.details
+                                  }));
+                                } else {
+                                  handleInputChange("profileId", "");
+                                  handleInputChange("profileName", "");
+                                  handleInputChange("location", "");
+                                }
+                              }}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-white dark:bg-zinc-900 px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
                               required
-                            />
+                            >
+                              <option value="">-- Select an Institute --</option>
+                              {profiles.filter(p => p.type === "Institute").map(p => (
+                                <option key={p.id} value={p.id}>{p.name} - {p.location}</option>
+                              ))}
+                            </select>
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
@@ -546,6 +691,7 @@ export default function ReportsPage() {
                               onChange={(e) => handleInputChange("location", e.target.value)}
                               className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
                               required
+                              readOnly
                             />
                           </div>
                           <div>
@@ -607,6 +753,16 @@ export default function ReportsPage() {
                             />
                           </div>
                           <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Date *</label>
+                            <input
+                              type="date"
+                              value={formData.date || ""}
+                              onChange={(e) => handleInputChange("date", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
                             <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Students Attended</label>
                             <input
                               type="number"
@@ -658,6 +814,16 @@ export default function ReportsPage() {
                               type="text"
                               value={formData.location || ""}
                               onChange={(e) => handleInputChange("location", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Date *</label>
+                            <input
+                              type="date"
+                              value={formData.date || ""}
+                              onChange={(e) => handleInputChange("date", e.target.value)}
                               className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
                               required
                             />
@@ -723,6 +889,16 @@ export default function ReportsPage() {
                               type="text"
                               value={formData.location || ""}
                               onChange={(e) => handleInputChange("location", e.target.value)}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Date *</label>
+                            <input
+                              type="date"
+                              value={formData.date || ""}
+                              onChange={(e) => handleInputChange("date", e.target.value)}
                               className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
                               required
                             />
@@ -799,14 +975,34 @@ export default function ReportsPage() {
                       <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="sm:col-span-2">
-                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Institution/Hospital Name *</label>
-                            <input
-                              type="text"
-                              value={formData.hospitalOrInstitutionName || ""}
-                              onChange={(e) => handleInputChange("hospitalOrInstitutionName", e.target.value)}
-                              className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
+                            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Select Hospital Profile *</label>
+                            <select
+                              value={formData.profileId || ""}
+                              onChange={(e) => {
+                                const profId = e.target.value;
+                                const prof = profiles.find(p => p.id === profId);
+                                if (prof) {
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    profileId: profId,
+                                    profileName: prof.name,
+                                    location: prof.location,
+                                    ...prof.details
+                                  }));
+                                } else {
+                                  handleInputChange("profileId", "");
+                                  handleInputChange("profileName", "");
+                                  handleInputChange("location", "");
+                                }
+                              }}
+                              className="w-full border border-gray-200 dark:border-gray-800 bg-white dark:bg-zinc-900 px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
                               required
-                            />
+                            >
+                              <option value="">-- Select a Hospital --</option>
+                              {profiles.filter(p => p.type === "Hospital").map(p => (
+                                <option key={p.id} value={p.id}>{p.name} - {p.location}</option>
+                              ))}
+                            </select>
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
@@ -816,6 +1012,7 @@ export default function ReportsPage() {
                               onChange={(e) => handleInputChange("location", e.target.value)}
                               className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white"
                               required
+                              readOnly
                             />
                           </div>
                           <div>
@@ -948,6 +1145,8 @@ export default function ReportsPage() {
         </div>
       )}
 
+      {activeTab === "Reports" ? (
+        <>
       {/* Submitted Reports List (Full Width) */}
       <div>
         <div className="bg-white dark:bg-zinc-950 p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs">
@@ -1112,6 +1311,206 @@ export default function ReportsPage() {
               )}
             </div>
           </div>
+        </>
+      ) : (
+        <>
+          {/* ENTITY PROFILES VIEW */}
+          <div className="bg-white dark:bg-zinc-950 p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs">
+            <h2 className="text-xl font-bold tracking-tight mb-6">Entity Profiles</h2>
+            {profiles.length === 0 ? (
+              <div className="bg-white dark:bg-black p-12 rounded-lg border border-gray-200 dark:border-gray-800 text-center">
+                <Building2 className="w-12 h-12 mx-auto text-gray-300 mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">No profiles created yet</h3>
+                <p className="text-gray-500 mt-1">Create an Institute or Hospital profile to get started.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {profiles.map(p => {
+                  const linkedReports = reports.filter(r => r.activityDetails?.profileId === p.id);
+                  return (
+                    <div 
+                      key={p.id} 
+                      onClick={() => setSelectedProfileForView(p)}
+                      className="p-5 rounded-xl border border-gray-200 dark:border-gray-800 hover:border-blue-500 dark:hover:border-blue-500 transition-colors bg-white dark:bg-zinc-950 cursor-pointer shadow-sm hover:shadow-md"
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider bg-gray-100 dark:bg-zinc-900 text-gray-700 dark:text-gray-300 px-2.5 py-0.5 rounded-full">{p.type}</span>
+                        <span className="text-xs text-blue-600 dark:text-blue-400 font-semibold bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded">{linkedReports.length} Reports</span>
+                      </div>
+                      <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100">{p.name}</h3>
+                      <p className="text-xs text-gray-500 flex items-center gap-1 mt-1 font-medium"><MapPin className="w-3.5 h-3.5" />{p.location}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* VIEW PROFILE MODAL */}
+      {selectedProfileForView && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-zinc-950 rounded-xl border border-gray-200 dark:border-gray-800 w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+              <div>
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-gray-650 dark:text-gray-400" /> 
+                  {selectedProfileForView.name}
+                </h2>
+                <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1"><MapPin className="w-3 h-3"/> {selectedProfileForView.location} • {selectedProfileForView.type} Profile</p>
+              </div>
+              <button type="button" onClick={() => setSelectedProfileForView(null)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-zinc-900 rounded-lg transition-colors text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 space-y-8">
+              {/* Profile Details section */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 mb-3 border-b border-gray-100 dark:border-gray-800 pb-2">Profile Information</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  {Object.entries(selectedProfileForView.details).map(([key, value]) => {
+                    if (!value || key === 'institutionName' || key === 'hospitalName' || key === 'location') return null;
+                    const formattedKey = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                    return (
+                      <div key={key} className="bg-gray-50 dark:bg-zinc-900/40 p-3 rounded-lg border border-gray-100 dark:border-gray-800/60">
+                        <p className="text-[10px] uppercase font-bold text-gray-500 tracking-wider mb-1">{formattedKey}</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{String(value)}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Linked Reports section */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 mb-3 border-b border-gray-100 dark:border-gray-800 pb-2">Linked Follow-up Reports</h3>
+                <div className="space-y-3">
+                  {(() => {
+                    const linked = reports.filter(r => r.activityDetails?.profileId === selectedProfileForView.id);
+                    if (linked.length === 0) return <p className="text-sm text-gray-500 italic">No follow-up reports logged yet.</p>;
+                    return linked.map(r => (
+                      <div key={r.id} className="p-4 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700 transition-colors cursor-pointer" onClick={() => triggerPrintModal(r)}>
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded">{r.activityType}</span>
+                          <span className="text-xs text-gray-500">{r.createdAt ? new Date(r.createdAt.toMillis()).toLocaleDateString() : 'Just now'}</span>
+                        </div>
+                        <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 mt-2">{r.activityDetails?.modeOfMeeting || "Follow-up Meeting"}</p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">{r.activityDetails?.clientFeedback}</p>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PROFILE CREATION MODAL */}
+      {isProfileModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-zinc-950 rounded-xl border border-gray-200 dark:border-gray-800 w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+              <h2 className="text-lg font-bold flex items-center gap-2"><Building2 className="w-5 h-5 text-gray-650 dark:text-gray-400" /> Create Entity Profile</h2>
+              <button type="button" onClick={() => setIsProfileModalOpen(false)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-zinc-900 rounded-lg transition-colors text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={handleSubmitProfile} className="flex flex-col flex-1 overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold mb-1.5 text-gray-700 dark:text-gray-300">Profile Type *</label>
+                  <select value={profileType} onChange={(e) => setProfileType(e.target.value as any)} className="w-full border border-gray-200 dark:border-gray-800 bg-white dark:bg-zinc-900 px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 dark:focus:ring-white" required>
+                    <option value="">Select Type...</option>
+                    <option value="Institute">Institute</option>
+                    <option value="Hospital">Hospital</option>
+                  </select>
+                </div>
+
+                {profileType === "Institute" && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-gray-150 dark:border-gray-800/80">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Institution Name *</label>
+                      <input type="text" value={profileFormData.institutionName || ""} onChange={(e) => setProfileFormData(p => ({...p, institutionName: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" required />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
+                      <input type="text" value={profileFormData.location || ""} onChange={(e) => setProfileFormData(p => ({...p, location: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" required />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Final Year Students</label>
+                      <input type="number" value={profileFormData.finalYearStudents || ""} onChange={(e) => setProfileFormData(p => ({...p, finalYearStudents: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Head of Institute</label>
+                      <input type="text" value={profileFormData.headOfInstitute || ""} onChange={(e) => setProfileFormData(p => ({...p, headOfInstitute: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Head Contact</label>
+                      <input type="tel" value={profileFormData.headContact || ""} onChange={(e) => setProfileFormData(p => ({...p, headContact: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">SPOC from Institute</label>
+                      <input type="text" value={profileFormData.spocName || ""} onChange={(e) => setProfileFormData(p => ({...p, spocName: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">SPOC Contact</label>
+                      <input type="tel" value={profileFormData.spocContact || ""} onChange={(e) => setProfileFormData(p => ({...p, spocContact: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">SPOC Email</label>
+                      <input type="email" value={profileFormData.spocEmail || ""} onChange={(e) => setProfileFormData(p => ({...p, spocEmail: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                  </div>
+                )}
+
+                {profileType === "Hospital" && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-gray-150 dark:border-gray-800/80">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Hospital Name *</label>
+                      <input type="text" value={profileFormData.hospitalName || ""} onChange={(e) => setProfileFormData(p => ({...p, hospitalName: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" required />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Location *</label>
+                      <input type="text" value={profileFormData.location || ""} onChange={(e) => setProfileFormData(p => ({...p, location: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" required />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Number of Beds</label>
+                      <input type="number" value={profileFormData.bedsCount || ""} onChange={(e) => setProfileFormData(p => ({...p, bedsCount: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Number of Employees</label>
+                      <input type="number" value={profileFormData.employeesCount || ""} onChange={(e) => setProfileFormData(p => ({...p, employeesCount: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Head of Hospital</label>
+                      <input type="text" value={profileFormData.headOfHospital || ""} onChange={(e) => setProfileFormData(p => ({...p, headOfHospital: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Contact</label>
+                      <input type="tel" value={profileFormData.contact || ""} onChange={(e) => setProfileFormData(p => ({...p, contact: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Head of HR</label>
+                      <input type="text" value={profileFormData.headOfHR || ""} onChange={(e) => setProfileFormData(p => ({...p, headOfHR: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">HR Contact</label>
+                      <input type="tel" value={profileFormData.hrContact || ""} onChange={(e) => setProfileFormData(p => ({...p, hrContact: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">HR Email</label>
+                      <input type="email" value={profileFormData.hrEmail || ""} onChange={(e) => setProfileFormData(p => ({...p, hrEmail: e.target.value}))} className="w-full border border-gray-200 dark:border-gray-800 bg-transparent px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white" />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-zinc-900/10 flex justify-end gap-2.5">
+                <button type="button" onClick={() => setIsProfileModalOpen(false)} className="px-4 py-2.5 border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-zinc-900 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold transition-colors cursor-pointer">Cancel</button>
+                <button type="submit" disabled={isSubmittingProfile || !profileType} className="bg-blue-600 hover:bg-blue-700 text-white dark:bg-white dark:text-black px-5 py-2.5 rounded-lg font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer transition-colors">{isSubmittingProfile ? "Saving..." : "Create Profile"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
         </div>
       )}

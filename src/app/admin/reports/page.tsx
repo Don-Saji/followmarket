@@ -49,7 +49,8 @@ export default function AdminReportsPage() {
   const summaryPrintAreaRef = useRef<HTMLDivElement>(null);
 
   // Filtering State
-  const [selectedMonth, setSelectedMonth] = useState<string>("All");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
   const [selectedActivityType, setSelectedActivityType] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
@@ -79,10 +80,29 @@ export default function AdminReportsPage() {
           setActivities(actmap);
         }
 
-        // 3. Fetch Reports
+        // 3. Fetch Profiles
+        const pSnap = await getDocs(collection(db, "entity_profiles"));
+        const pData: Record<string, any> = {};
+        pSnap.docs.forEach(doc => {
+          pData[doc.id] = doc.data();
+        });
+
+        // 4. Fetch Reports
         const rSnap = await getDocs(collection(db, "reports"));
-        const rData = rSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Report))
-          .filter(r => r.status === "Submitted" || r.status === "Reviewed");
+        const rData = rSnap.docs.map(doc => {
+          const r = { id: doc.id, ...doc.data() } as Report;
+          // Merge profile details if profileId exists
+          if (r.activityDetails && r.activityDetails.profileId && pData[r.activityDetails.profileId]) {
+            const profile = pData[r.activityDetails.profileId];
+            if (profile && profile.details) {
+              r.activityDetails = {
+                ...profile.details,
+                ...r.activityDetails
+              };
+            }
+          }
+          return r;
+        }).filter(r => r.status === "Submitted" || r.status === "Reviewed");
 
         // Sort: Submitted first, then by date
         rData.sort((a, b) => {
@@ -213,28 +233,26 @@ export default function AdminReportsPage() {
     setIsPrintModalOpen(true);
   };
 
-  const getUniqueMonths = () => {
-    const months = new Set<string>();
-    reports.forEach(r => {
-      if (r.createdAt) {
-        const date = new Date(r.createdAt.toMillis());
-        const label = date.toLocaleString("en-US", { month: "long", year: "numeric" });
-        months.add(label);
-      }
-    });
-    return Array.from(months).sort((a, b) => {
-      return new Date(b).getTime() - new Date(a).getTime();
-    });
-  };
-
   const getFilteredReports = () => {
     let result = reports;
-    if (selectedMonth !== "All") {
+    if (startDate) {
+      const start = new Date(startDate);
+      const startTime = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
       result = result.filter(r => {
         if (!r.createdAt) return false;
-        const date = new Date(r.createdAt.toMillis());
-        const label = date.toLocaleString("en-US", { month: "long", year: "numeric" });
-        return label === selectedMonth;
+        const reportDate = new Date(r.createdAt.toMillis());
+        const reportTime = new Date(reportDate.getFullYear(), reportDate.getMonth(), reportDate.getDate()).getTime();
+        return reportTime >= startTime;
+      });
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      const endTime = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+      result = result.filter(r => {
+        if (!r.createdAt) return false;
+        const reportDate = new Date(r.createdAt.toMillis());
+        const reportTime = new Date(reportDate.getFullYear(), reportDate.getMonth(), reportDate.getDate()).getTime();
+        return reportTime <= endTime;
       });
     }
     if (selectedActivityType !== "All") {
@@ -249,12 +267,12 @@ export default function AdminReportsPage() {
         const loc = (r.activityDetails?.location || "").toLowerCase();
         const spoc = (r.activityDetails?.spocName || "").toLowerCase();
         const content = (r.content || "").toLowerCase();
-        return name.includes(query) || 
-               type.includes(query) || 
-               email.includes(query) || 
-               loc.includes(query) || 
-               spoc.includes(query) || 
-               content.includes(query);
+        return name.includes(query) ||
+          type.includes(query) ||
+          email.includes(query) ||
+          loc.includes(query) ||
+          spoc.includes(query) ||
+          content.includes(query);
       });
     }
     return result;
@@ -262,7 +280,8 @@ export default function AdminReportsPage() {
 
   const handleResetFilters = () => {
     setSearchQuery("");
-    setSelectedMonth("All");
+    setStartDate("");
+    setEndDate("");
     setSelectedActivityType("All");
   };
 
@@ -341,20 +360,26 @@ export default function AdminReportsPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Month:</span>
-                <select
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="border border-gray-200 dark:border-gray-800 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 px-2.5 py-2 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white cursor-pointer"
-                >
-                  <option value="All">All Months</option>
-                  {getUniqueMonths().map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Start:</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="border border-gray-200 dark:border-gray-800 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 px-2.5 py-1.5 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white cursor-pointer"
+                />
               </div>
 
-              {(searchQuery || selectedMonth !== "All" || selectedActivityType !== "All") && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">End:</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="border border-gray-200 dark:border-gray-800 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 px-2.5 py-1.5 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-600 dark:focus:ring-white cursor-pointer"
+                />
+              </div>
+
+              {(searchQuery || startDate || endDate || selectedActivityType !== "All") && (
                 <button
                   onClick={handleResetFilters}
                   className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
@@ -429,14 +454,14 @@ export default function AdminReportsPage() {
                       )}
                     </div>
                   </div>
-                  
+
                   {report.deleteRequested && report.deleteReason && (
                     <div className="mb-4 p-4 bg-red-50/50 dark:bg-red-950/10 rounded-lg border border-red-150 dark:border-red-900/30 text-xs">
                       <span className="font-bold text-red-500 uppercase tracking-wider text-[10px] block mb-1">Reason for Deletion Request:</span>
                       <p className="text-gray-700 dark:text-gray-350 italic font-medium">&ldquo;{report.deleteReason}&rdquo;</p>
                     </div>
                   )}
-                  
+
                   {report.activityDetails && (
                     <div className="mb-4 p-4 bg-gray-50 dark:bg-zinc-900/40 rounded-lg border border-gray-150 dark:border-gray-800 text-xs space-y-2">
                       <p className="font-bold text-gray-500 dark:text-gray-450 uppercase tracking-wider text-[10px]">Logged Activity Parameters</p>
@@ -576,7 +601,7 @@ export default function AdminReportsPage() {
               {(() => {
                 const details = selectedReportForPrint.activityDetails || {};
                 return (
-                  <div 
+                  <div
                     className="w-full max-w-[760px] bg-white shadow-[0_12px_40px_rgba(0,0,0,0.35)] border border-zinc-200 rounded-sm p-12 mx-auto space-y-8 text-left"
                     style={{ backgroundColor: '#ffffff', color: '#18181b', minHeight: '800px' }}
                   >
@@ -765,7 +790,7 @@ export default function AdminReportsPage() {
                           const fileName = selectedReportForPrint.fileName || "";
                           const fileUrl = selectedReportForPrint.fileUrl;
                           const isImage = /\.(jpe?g|png|gif|webp|bmp)$/i.test(fileName) || fileUrl.includes(".jpg") || fileUrl.includes(".png") || fileUrl.includes(".jpeg") || fileUrl.includes(".webp");
-                          
+
                           if (isImage) {
                             return (
                               <div className="border border-zinc-200 rounded-lg p-3 bg-zinc-50 flex flex-col items-center justify-center gap-2">
@@ -774,9 +799,9 @@ export default function AdminReportsPage() {
                                 </div>
                                 <a href={fileUrl} target="_blank" rel="noopener noreferrer" title="View full size image" className="group relative block overflow-hidden rounded border border-zinc-200 bg-white">
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img 
-                                    src={fileUrl} 
-                                    alt={fileName || "Attachment"} 
+                                  <img
+                                    src={fileUrl}
+                                    alt={fileName || "Attachment"}
                                     className="max-h-[250px] w-auto object-contain mx-auto transition-transform hover:scale-[1.02] duration-300"
                                   />
                                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 flex items-center justify-center transition-colors">
@@ -803,10 +828,10 @@ export default function AdminReportsPage() {
                                     </p>
                                   </div>
                                 </div>
-                                <a 
-                                  href={fileUrl} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer" 
+                                <a
+                                  href={fileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
                                   className="inline-flex items-center gap-1.5 text-xs font-bold bg-zinc-900 hover:bg-zinc-800 text-white px-3.5 py-2 rounded-lg transition-colors shadow-sm cursor-pointer whitespace-nowrap"
                                 >
                                   View Document ↗
@@ -853,12 +878,11 @@ export default function AdminReportsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
           <div className="bg-zinc-900 rounded-xl border border-zinc-800 w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl text-zinc-100">
 
-            {/* Premium PDF Viewer Toolbar */}
+            {/* Summary Viewer Toolbar */}
             <div className="flex justify-between items-center px-6 py-3 border-b border-zinc-800 bg-zinc-950/80">
               <div className="flex items-center gap-3">
-                <div className="bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded tracking-tighter">PDF</div>
                 <span className="font-mono text-xs text-zinc-350 tracking-wide truncate max-w-[200px] sm:max-w-[300px]">
-                  consolidated_summary_{selectedMonth.replace(/\s+/g, '_').toLowerCase()}.pdf
+                  Consolidated Activity Summary
                 </span>
                 <span className="hidden sm:inline-flex items-center bg-zinc-800 text-zinc-400 text-[10px] px-2 py-0.5 rounded-md font-semibold uppercase tracking-wider">
                   Read Only Preview
@@ -876,19 +900,11 @@ export default function AdminReportsPage() {
                   <span className="cursor-not-allowed hover:text-zinc-200">+</span>
                 </div>
               </div>
-
-              <button
-                onClick={() => setIsSummaryModalOpen(false)}
-                className="p-1.5 hover:bg-zinc-800 rounded-lg transition-colors text-zinc-400 hover:text-white cursor-pointer"
-                title="Close Viewer"
-              >
-                <X className="w-5 h-5" />
-              </button>
             </div>
 
             {/* Scrollable Printable Document Preview Area - PDF Canvas */}
             <div className="flex-1 overflow-y-auto p-8 bg-zinc-800/40" ref={summaryPrintAreaRef}>
-              <div 
+              <div
                 className="w-full max-w-[760px] bg-white shadow-[0_12px_40px_rgba(0,0,0,0.35)] border border-zinc-200 rounded-sm p-12 mx-auto space-y-8 text-left"
                 style={{ backgroundColor: '#ffffff', color: '#18181b', minHeight: '800px' }}
               >
@@ -898,7 +914,7 @@ export default function AdminReportsPage() {
                   <div>
                     <h2 className="text-2xl font-black uppercase tracking-tight text-zinc-900">Consolidated Marketer Activity Report</h2>
                     <p className="text-xs text-zinc-550 mt-1.5 uppercase font-bold tracking-wider">
-                      Generated by Administrator {selectedMonth !== "All" && `• ${selectedMonth}`}
+                      Generated by Administrator {(startDate || endDate) && `• ${startDate ? startDate : 'Start'} to ${endDate ? endDate : 'Present'}`}
                     </p>
                   </div>
                   <div className="text-right text-xs text-zinc-550 font-bold tracking-tight">

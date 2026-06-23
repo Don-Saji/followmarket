@@ -160,34 +160,19 @@ export default function AdminBudgetPage() {
       "Activity Date",
       "Location",
       "Cost of Visit (INR)",
-      "Meeting Mode",
-      "Head (Institute/Hospital/HR)",
-      "Head Contact",
-      "SPOC Name",
-      "SPOC Contact",
-      "SPOC Email",
-      "Final Year Students",
-      "Students Attended",
-      "Students Registered",
-      "Beds Count",
-      "Employees Count",
-      "Target Professionals",
-      "Conference Participants",
-      "Footfalls",
-      "Registrations Count"
+      "Meeting Mode"
     ];
 
-    // Filter reports based on active month and matching marketers in filtered processedUsers
-    const matchingUserIds = new Set(processedUsers.map(u => u.id));
-    const exportReports = filteredReports.filter(r => matchingUserIds.has(r.marketerId));
+    // Filter reports based on active month and matching marketers in sortedUsers
+    const exportReports = sortedUsers.flatMap(user => 
+      filteredReports.filter(r => r.marketerId === user.id)
+    );
 
     const rows = exportReports.map(r => {
       const details = r.activityDetails || {};
       const marketer = marketers.find(u => u.id === r.marketerId);
       const marketerName = marketer?.name || "Unknown";
       
-      const headName = details.headOfInstitute || details.headOfHospital || details.headOfHR || "N/A";
-      const headContact = details.headContact || details.contact || details.hrContact || "N/A";
       const logDate = r.createdAt ? new Date(r.createdAt.toMillis()).toLocaleDateString() : "N/A";
 
       return [
@@ -199,21 +184,7 @@ export default function AdminBudgetPage() {
         details.date || "N/A",
         details.location || "N/A",
         details.costOfVisit !== undefined ? details.costOfVisit : 0,
-        details.modeOfMeeting || "N/A",
-        headName,
-        headContact,
-        details.spocName || "N/A",
-        details.spocContact || "N/A",
-        details.spocEmail || "N/A",
-        details.finalYearStudents !== undefined ? details.finalYearStudents : "N/A",
-        details.studentsAttended !== undefined ? details.studentsAttended : "N/A",
-        details.studentsRegistered !== undefined ? details.studentsRegistered : "N/A",
-        details.bedsCount !== undefined ? details.bedsCount : "N/A",
-        details.employeesCount !== undefined ? details.employeesCount : "N/A",
-        details.targetProfessionals || "N/A",
-        details.conferenceParticipants !== undefined ? details.conferenceParticipants : "N/A",
-        details.footfalls !== undefined ? details.footfalls : "N/A",
-        details.registrationsCount !== undefined ? details.registrationsCount : "N/A"
+        details.modeOfMeeting || "N/A"
       ];
     });
 
