@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase/config";
-import { collection, getDocs, query, where, orderBy } from "firebase/firestore";
-import { Building2, Search, MapPin, Building, Activity, Calendar, Loader2, ChevronRight, FileText, CheckCircle2, Eye, X } from "lucide-react";
+import { collection, getDocs, query, where, orderBy, deleteDoc, updateDoc, addDoc, serverTimestamp, doc } from "firebase/firestore";
+import { Building2, Search, MapPin, Building, Activity, Calendar, Loader2, ChevronRight, FileText, CheckCircle2, Eye, X, AlertCircle } from "lucide-react";
 import { useRef } from "react";
 
 interface EntityProfile {
@@ -14,6 +14,8 @@ interface EntityProfile {
   location: string;
   details: Record<string, any>;
   createdAt?: { toMillis: () => number };
+  deleteRequested?: boolean;
+  deleteReason?: string;
 }
 
 interface Report {
@@ -31,7 +33,7 @@ export default function AdminProfilesPage() {
   const [profiles, setProfiles] = useState<EntityProfile[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedType, setSelectedType] = useState<string>("All");
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -53,7 +55,7 @@ export default function AdminProfilesPage() {
         // Fetch profiles
         const pSnap = await getDocs(collection(db, "entity_profiles"));
         const pData = pSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as EntityProfile));
-        
+
         pData.sort((a, b) => {
           const aName = a.name || "";
           const bName = b.name || "";
@@ -84,6 +86,60 @@ export default function AdminProfilesPage() {
     };
   }, []);
 
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
+  const handleApproveProfileDelete = async (profileId: string, marketerId: string, profileName: string) => {
+    if (!window.confirm(`Are you sure you want to approve deletion of the profile "${profileName}"? This will permanently delete the profile.`)) return;
+    setProcessingId(profileId);
+    try {
+      await deleteDoc(doc(db, "entity_profiles", profileId));
+
+      // Notify marketer
+      await addDoc(collection(db, "notifications"), {
+        userId: marketerId,
+        title: "Profile Deletion Approved",
+        message: `Your request to delete the profile "${profileName}" has been approved by the administrator.`,
+        read: false,
+        createdAt: serverTimestamp()
+      });
+
+      setProfiles(prev => prev.filter(p => p.id !== profileId));
+      if (selectedProfileId === profileId) {
+        setSelectedProfileId(null);
+      }
+    } catch (error) {
+      console.error("Error approving profile deletion:", error);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleRejectProfileDelete = async (profileId: string, marketerId: string, profileName: string) => {
+    if (!window.confirm(`Are you sure you want to reject the deletion request for "${profileName}"?`)) return;
+    setProcessingId(profileId);
+    try {
+      await updateDoc(doc(db, "entity_profiles", profileId), {
+        deleteRequested: false,
+        deleteReason: ""
+      });
+
+      // Notify marketer
+      await addDoc(collection(db, "notifications"), {
+        userId: marketerId,
+        title: "Profile Deletion Rejected",
+        message: `Your request to delete the profile "${profileName}" has been rejected by the administrator.`,
+        read: false,
+        createdAt: serverTimestamp()
+      });
+
+      setProfiles(prev => prev.map(p => p.id === profileId ? { ...p, deleteRequested: false, deleteReason: "" } : p));
+    } catch (error) {
+      console.error("Error rejecting profile deletion:", error);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   const getFilteredProfiles = () => {
     let result = profiles;
     if (selectedType !== "All") {
@@ -91,8 +147,8 @@ export default function AdminProfilesPage() {
     }
     if (searchQuery.trim() !== "") {
       const q = searchQuery.toLowerCase().trim();
-      result = result.filter(p => 
-        p.name.toLowerCase().includes(q) || 
+      result = result.filter(p =>
+        p.name.toLowerCase().includes(q) ||
         p.location.toLowerCase().includes(q)
       );
     }
@@ -108,7 +164,7 @@ export default function AdminProfilesPage() {
   }) : [];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)]">
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
       <header className="mb-6 flex-shrink-0">
         <h1 className="text-3xl font-bold tracking-tight">Profiles Directory</h1>
         <p className="text-gray-500 mt-1">Manage and review all registered Institutes and Hospitals.</p>
@@ -120,7 +176,7 @@ export default function AdminProfilesPage() {
         </div>
       ) : (
         <div className="flex-1 flex gap-6 min-h-0">
-          
+
           {/* Master List (Left Sidebar) */}
           <div className="w-1/3 flex flex-col bg-white dark:bg-black rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
             <div className="p-4 border-b border-gray-200 dark:border-gray-800 space-y-3 bg-gray-50/50 dark:bg-zinc-900/30">
@@ -139,11 +195,10 @@ export default function AdminProfilesPage() {
                   <button
                     key={type}
                     onClick={() => setSelectedType(type)}
-                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold transition-colors ${
-                      selectedType === type 
-                      ? "bg-gray-900 text-white dark:bg-white dark:text-black" 
+                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold transition-colors ${selectedType === type
+                      ? "bg-gray-900 text-white dark:bg-white dark:text-black"
                       : "bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
-                    }`}
+                      }`}
                   >
                     {type}
                   </button>
@@ -161,21 +216,24 @@ export default function AdminProfilesPage() {
                   <button
                     key={profile.id}
                     onClick={() => setSelectedProfileId(profile.id)}
-                    className={`w-full text-left p-3 rounded-lg flex items-start gap-3 transition-colors ${
-                      selectedProfileId === profile.id
+                    className={`w-full text-left p-3 rounded-lg flex items-start gap-3 transition-colors ${selectedProfileId === profile.id
                       ? "bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-900/50"
                       : "hover:bg-gray-50 dark:hover:bg-zinc-900 border-transparent"
-                    } border`}
+                      } border`}
                   >
-                    <div className={`p-2 rounded-lg mt-0.5 flex-shrink-0 ${
-                      profile.type === "Hospital" 
-                      ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400" 
+                    <div className={`p-2 rounded-lg mt-0.5 flex-shrink-0 ${profile.type === "Hospital"
+                      ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
                       : "bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400"
-                    }`}>
+                      }`}>
                       {profile.type === "Hospital" ? <Activity className="w-4 h-4" /> : <Building className="w-4 h-4" />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-bold text-sm text-gray-900 dark:text-gray-100 truncate">{profile.name}</h4>
+                      <h4 className="font-bold text-sm text-gray-900 dark:text-gray-100 truncate flex items-center gap-2">
+                        {profile.name}
+                        {profile.deleteRequested && (
+                          <AlertCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
+                        )}
+                      </h4>
                       <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1 truncate">
                         <MapPin className="w-3 h-3" /> {profile.location}
                       </p>
@@ -191,14 +249,13 @@ export default function AdminProfilesPage() {
           <div className="flex-1 bg-white dark:bg-black rounded-xl border border-gray-200 dark:border-gray-800 overflow-y-auto shadow-sm p-8">
             {selectedProfile ? (
               <div className="space-y-8 animate-fade-in">
-                
+
                 {/* Profile Header */}
                 <div className="flex items-start gap-5 pb-6 border-b border-gray-100 dark:border-gray-800">
-                  <div className={`p-4 rounded-xl flex-shrink-0 ${
-                    selectedProfile.type === "Hospital" 
-                    ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400" 
+                  <div className={`p-4 rounded-xl flex-shrink-0 ${selectedProfile.type === "Hospital"
+                    ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
                     : "bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400"
-                  }`}>
+                    }`}>
                     {selectedProfile.type === "Hospital" ? <Activity className="w-8 h-8" /> : <Building className="w-8 h-8" />}
                   </div>
                   <div>
@@ -210,7 +267,40 @@ export default function AdminProfilesPage() {
                       <MapPin className="w-4 h-4" /> {selectedProfile.location}
                     </p>
                   </div>
+
+                  {selectedProfile.deleteRequested && (
+                    <div className="ml-auto flex flex-col items-end gap-2">
+                      <span className="bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400 text-xs px-2.5 py-1 rounded border border-red-200 dark:border-red-900/30 font-semibold flex items-center gap-1.5 animate-pulse">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        Delete Requested
+                      </span>
+                      <div className="flex items-center gap-2 mt-1">
+                        <button
+                          onClick={() => handleApproveProfileDelete(selectedProfile.id, selectedProfile.marketerId, selectedProfile.name)}
+                          disabled={processingId === selectedProfile.id}
+                          className="inline-flex items-center gap-1 text-xs font-bold text-red-650 hover:text-red-800 dark:text-red-400 dark:hover:text-red-355 disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                        <span className="text-gray-300 dark:text-gray-700">|</span>
+                        <button
+                          onClick={() => handleRejectProfileDelete(selectedProfile.id, selectedProfile.marketerId, selectedProfile.name)}
+                          disabled={processingId === selectedProfile.id}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-black dark:hover:text-white disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
+
+                {selectedProfile.deleteRequested && selectedProfile.deleteReason && (
+                  <div className="p-4 bg-red-50/50 dark:bg-red-950/10 rounded-lg border border-red-150 dark:border-red-900/30 text-xs -mt-2">
+                    <span className="font-bold text-red-500 uppercase tracking-wider text-[10px] block mb-1">Reason for Deletion Request:</span>
+                    <p className="text-gray-700 dark:text-gray-350 italic font-medium">&ldquo;{selectedProfile.deleteReason}&rdquo;</p>
+                  </div>
+                )}
 
                 {/* Profile Detailed Attributes */}
                 <div>
@@ -249,7 +339,7 @@ export default function AdminProfilesPage() {
                       {profileReports.length}
                     </span>
                   </h3>
-                  
+
                   <div className="space-y-3">
                     {profileReports.length === 0 ? (
                       <p className="text-sm text-gray-500 p-4 bg-gray-50 dark:bg-zinc-900/30 rounded-lg border border-dashed border-gray-200 dark:border-gray-800">
@@ -269,16 +359,15 @@ export default function AdminProfilesPage() {
                               {report.createdAt ? new Date(report.createdAt.toMillis()).toLocaleDateString() : 'Unknown Date'}
                             </span>
                           </div>
-                          
+
                           <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
                             <div className="text-gray-600 dark:text-gray-400">
                               <span className="font-semibold">Marketer:</span> {report.marketerEmail || "Unknown"}
                             </div>
                             <div className="text-gray-600 dark:text-gray-400">
-                              <span className="font-semibold">Status:</span> 
-                              <span className={`ml-1 px-1.5 py-0.5 rounded-full font-semibold text-[10px] ${
-                                report.status === "Reviewed" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                              }`}>{report.status}</span>
+                              <span className="font-semibold">Status:</span>
+                              <span className={`ml-1 px-1.5 py-0.5 rounded-full font-semibold text-[10px] ${report.status === "Reviewed" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                                }`}>{report.status}</span>
                             </div>
                             {report.activityDetails?.modeOfMeeting && (
                               <div className="text-gray-600 dark:text-gray-400">
@@ -286,24 +375,24 @@ export default function AdminProfilesPage() {
                               </div>
                             )}
                           </div>
-                          
-                            {report.activityDetails?.clientFeedback && (
-                              <div className="mt-3 p-2 bg-gray-50 dark:bg-zinc-900/50 rounded-md text-xs text-gray-600 dark:text-gray-300 border border-gray-100 dark:border-zinc-800">
-                                <span className="font-bold text-gray-500 uppercase tracking-wider text-[9px] block mb-0.5">Client Feedback</span>
-                                <p className="line-clamp-2">{report.activityDetails.clientFeedback}</p>
-                              </div>
-                            )}
-                            
-                            <div className="mt-4 flex justify-end">
-                              <button
-                                onClick={() => triggerPrintModal(report)}
-                                className="inline-flex items-center gap-1.5 text-xs font-semibold border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-zinc-900 text-gray-700 dark:text-gray-300 rounded-lg px-3 py-1.5 transition-colors cursor-pointer"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                View Full Report
-                              </button>
+
+                          {report.activityDetails?.clientFeedback && (
+                            <div className="mt-3 p-2 bg-gray-50 dark:bg-zinc-900/50 rounded-md text-xs text-gray-600 dark:text-gray-300 border border-gray-100 dark:border-zinc-800">
+                              <span className="font-bold text-gray-500 uppercase tracking-wider text-[9px] block mb-0.5">Client Feedback</span>
+                              <p className="line-clamp-2">{report.activityDetails.clientFeedback}</p>
                             </div>
+                          )}
+
+                          <div className="mt-4 flex justify-end">
+                            <button
+                              onClick={() => triggerPrintModal(report)}
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-zinc-900 text-gray-700 dark:text-gray-300 rounded-lg px-3 py-1.5 transition-colors cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              View Full Report
+                            </button>
                           </div>
+                        </div>
                       ))
                     )}
                   </div>
@@ -487,3 +576,4 @@ function DetailCard({ label, value, subtext }: { label: string, value: string | 
     </div>
   );
 }
+

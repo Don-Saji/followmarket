@@ -65,6 +65,8 @@ export interface EntityProfile {
   marketerId: string;
   createdAt?: { toMillis: () => number };
   details: Record<string, any>;
+  deleteRequested?: boolean;
+  deleteReason?: string;
 }
 
 export default function ReportsPage() {
@@ -134,12 +136,13 @@ export default function ReportsPage() {
 
         // Merge profile details into past reports for complete viewing
         repData.forEach(r => {
-          if (r.activityDetails && r.activityDetails.profileId) {
-            const prof = profData.find(p => p.id === r.activityDetails.profileId);
+          const details = r.activityDetails;
+          if (details && details.profileId) {
+            const prof = profData.find(p => p.id === details.profileId);
             if (prof && prof.details) {
               r.activityDetails = {
                 ...prof.details,
-                ...r.activityDetails
+                ...details
               };
             }
           }
@@ -280,6 +283,45 @@ export default function ReportsPage() {
       ));
     } catch (error) {
       console.error("Error requesting report deletion:", error);
+    }
+  };
+
+  const handleRequestProfileDelete = async (profileId: string, profileName: string) => {
+    const reason = window.prompt("Please enter a reason for requesting deletion of this profile:");
+    if (reason === null) return; // User cancelled
+    if (!reason.trim()) {
+      alert("A reason is required to request profile deletion.");
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, "entity_profiles", profileId), {
+        deleteRequested: true,
+        deleteReason: reason.trim(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Notify Admin
+      await addDoc(collection(db, "notifications"), {
+        userId: "admin",
+        title: "Profile Deletion Request",
+        message: `Marketer ${user?.email || "a marketer"} is requesting deletion of profile "${profileName}". Reason: "${reason.trim()}"`,
+        read: false,
+        createdAt: serverTimestamp()
+      });
+
+      setProfiles(prev => prev.map(p =>
+        p.id === profileId
+          ? { ...p, deleteRequested: true, deleteReason: reason.trim() }
+          : p
+      ));
+      
+      // Update the selected profile if it's currently open
+      if (selectedProfileForView && selectedProfileForView.id === profileId) {
+        setSelectedProfileForView(prev => prev ? { ...prev, deleteRequested: true, deleteReason: reason.trim() } : null);
+      }
+    } catch (error) {
+      console.error("Error requesting profile deletion:", error);
     }
   };
 
@@ -1360,7 +1402,24 @@ export default function ReportsPage() {
                 </h2>
                 <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1"><MapPin className="w-3 h-3"/> {selectedProfileForView.location} • {selectedProfileForView.type} Profile</p>
               </div>
-              <button type="button" onClick={() => setSelectedProfileForView(null)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-zinc-900 rounded-lg transition-colors text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+              <div className="flex items-center gap-4">
+                {selectedProfileForView.deleteRequested ? (
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-[11px] text-red-500 font-semibold italic bg-red-50 dark:bg-red-950/20 px-2 py-0.5 rounded border border-red-200/50 dark:border-red-900/30">
+                      Delete Requested
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleRequestProfileDelete(selectedProfileForView.id, selectedProfileForView.name)}
+                    className="text-xs font-semibold text-red-500 hover:text-red-700 transition-colors cursor-pointer bg-red-50 dark:bg-red-950/20 px-2.5 py-1.5 rounded-lg border border-red-100 dark:border-red-900/30"
+                  >
+                    Request Delete
+                  </button>
+                )}
+                <button type="button" onClick={() => setSelectedProfileForView(null)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-zinc-900 rounded-lg transition-colors text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+              </div>
             </div>
             
             <div className="flex-1 overflow-y-auto p-6 space-y-8">

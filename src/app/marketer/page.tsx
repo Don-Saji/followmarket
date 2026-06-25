@@ -42,11 +42,9 @@ interface Report {
 }
 
 const ACTIVITY_TYPES = [
-  "Meetings with Institutes",
   "Follow up with Institutes",
   "Campaigns Conducted",
   "Participation in Conferences",
-  "Meetings with Hospitals",
   "Follow up with Hospitals"
 ];
 

@@ -35,7 +35,7 @@ const CustomPieTooltip = ({ active, payload }: any) => {
 };
 
 export default function AdminDashboard() {
-  useAuth();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [activities, setActivities] = useState<DocumentData[]>([]);
   const [activeMarketersCount, setActiveMarketersCount] = useState(0);
@@ -98,11 +98,9 @@ export default function AdminDashboard() {
   const pieChartData = useMemo(() => {
     const typeMap: Record<string, { cost: number; count: number }> = {};
     const ACTIVITY_TYPES = [
-      "Meetings with Institutes",
       "Follow up with Institutes",
       "Campaigns Conducted",
       "Participation in Conferences",
-      "Meetings with Hospitals",
       "Follow up with Hospitals"
     ];
 
@@ -141,7 +139,7 @@ export default function AdminDashboard() {
   return (
     <div>
       <header className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Welcome Back, Admin!</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Welcome Back, {user?.displayName || "Admin"}!</h1>
         <p className="text-gray-500 mt-1">Admin Dashboard</p>
       </header>
 
