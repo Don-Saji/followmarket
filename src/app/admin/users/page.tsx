@@ -51,8 +51,8 @@ export default function AdminUsersPage() {
   }, []);
 
   const handleAction = async (userId: string, currentStatus: string | undefined, newStatus: "active" | "suspended") => {
-    const actionText = newStatus === "suspended" 
-      ? "suspend this marketer? They will lose access to their account immediately." 
+    const actionText = newStatus === "suspended"
+      ? "suspend this marketer? They will lose access to their account immediately."
       : "activate this marketer's account?";
     if (!window.confirm(`Are you sure you want to ${actionText}`)) return;
 
@@ -60,7 +60,7 @@ export default function AdminUsersPage() {
       await updateDoc(doc(db, "users", userId), {
         status: newStatus
       });
-      
+
       setUsers(users.map(u => u.id === userId ? { ...u, status: newStatus } : u));
     } catch (error) {
       console.error(`Error updating user status to ${newStatus}:`, error);
@@ -112,7 +112,7 @@ export default function AdminUsersPage() {
       setNewName("");
       setNewEmail("");
       setNewPassword("");
-      
+
       setTimeout(() => {
         setCreateSuccess("");
       }, 3000);
@@ -183,11 +183,10 @@ export default function AdminUsersPage() {
                       <td className="px-6 py-4 font-medium text-gray-900 dark:text-gray-100">{user.name || "N/A"}</td>
                       <td className="px-6 py-4 text-gray-550">{user.email}</td>
                       <td className="px-6 py-4">
-                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                          isActive
-                            ? 'bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400' 
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${isActive
+                            ? 'bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400'
                             : 'bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400'
-                        }`}>
+                          }`}>
                           {isActive ? 'Active' : 'Suspended'}
                         </span>
                       </td>
@@ -199,13 +198,12 @@ export default function AdminUsersPage() {
                         }) : 'Unknown'}
                       </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
-                        <button 
+                        <button
                           onClick={() => handleAction(user.id, user.status, isActive ? 'suspended' : 'active')}
-                          className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors cursor-pointer border ${
-                            isActive
+                          className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors cursor-pointer border ${isActive
                               ? 'text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/30 dark:hover:bg-red-950/20'
                               : 'text-green-600 border-green-200 hover:bg-green-50 dark:text-green-400 dark:border-green-900/30 dark:hover:bg-green-950/20'
-                          }`}
+                            }`}
                         >
                           {isActive ? (
                             <><ShieldBan className="w-3.5 h-3.5" /> Suspend</>
@@ -229,7 +227,7 @@ export default function AdminUsersPage() {
           <UserPlus className="w-5 h-5 text-indigo-500" />
           Add New Marketer
         </h2>
-        
+
         <form onSubmit={handleCreateMarketer} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>

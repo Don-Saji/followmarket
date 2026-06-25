@@ -4,12 +4,12 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/contexts/AuthContext";
 import { db } from "@/lib/firebase/config";
 import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
-import { 
-  ClipboardList, 
-  Loader2, 
-  IndianRupee, 
-  CheckCircle2, 
-  TrendingUp, 
+import {
+  ClipboardList,
+  Loader2,
+  IndianRupee,
+  CheckCircle2,
+  TrendingUp,
   FileText,
   ChevronLeft,
   ChevronRight
@@ -71,6 +71,29 @@ const TimelineTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+// Custom Label for Marketer Pie Chart - percentage centered on each slice
+const renderMarketerPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+  if (!percent || percent < 0.05) return null;
+  const RADIAN = Math.PI / 180;
+  // Position label at the midpoint of the slice arc
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.55;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="white"
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={11}
+      fontWeight="700"
+    >
+      {`${(percent * 100).toFixed(0)}%`}
+    </text>
+  );
+};
+
 // Custom Tooltip for Budget Pie Chart
 const BudgetTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
@@ -114,15 +137,15 @@ export default function MarketerDashboard() {
         }
 
         const q = query(
-          collection(db, "reports"), 
+          collection(db, "reports"),
           where("marketerId", "==", user.uid)
         );
         const querySnapshot = await getDocs(q);
-        const data = querySnapshot.docs.map(doc => ({ 
-          id: doc.id, 
-          ...doc.data() 
+        const data = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
         } as Report));
-        
+
         if (active) {
           setReports(data);
         }
@@ -150,13 +173,13 @@ export default function MarketerDashboard() {
   // Chart 1 Data: Timeline of Reports logged by Date
   const getTimelineData = () => {
     const dateMap = new Map<string, { count: number; budget: number; timestamp: number }>();
-    
+
     reports.forEach(r => {
       if (r.createdAt) {
         const ms = r.createdAt.toMillis();
         const d = new Date(ms);
         const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        
+
         const existing = dateMap.get(dateStr) || { count: 0, budget: 0, timestamp: ms };
         existing.count += 1;
         existing.budget += Number(r.activityDetails?.costOfVisit) || 0;
@@ -192,7 +215,7 @@ export default function MarketerDashboard() {
           .replace("Follow up with ", "")
           .replace("Participation in ", "")
           .replace("Conducted", "");
-          
+
         return {
           category: cleanLabel,
           "Budget Spent (₹)": typeMap[type]
@@ -205,7 +228,7 @@ export default function MarketerDashboard() {
     } else {
       // Group by individual activity names within the selected category filter
       const filteredReports = reports.filter(r => r.activityType === selectedCategoryFilter);
-      
+
       const nameMap: { [key: string]: number } = {};
       filteredReports.forEach(r => {
         const name = r.activityName || "Unknown";
@@ -271,7 +294,7 @@ export default function MarketerDashboard() {
                 <h3 className="text-2xl font-bold tracking-tight mt-0.5">{totalReports}</h3>
               </div>
             </div>
-            
+
             <div className="bg-white dark:bg-zinc-950 p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs flex items-center gap-4">
               <div className="p-3 bg-gray-100 dark:bg-zinc-900 text-black dark:text-white rounded-lg">
                 <IndianRupee className="w-5 h-5" />
@@ -343,8 +366,8 @@ export default function MarketerDashboard() {
 
             {/* Slider Window */}
             <div className="w-full overflow-hidden rounded-2xl border border-gray-205 dark:border-gray-800 bg-white dark:bg-zinc-950 shadow-xs">
-              <div 
-                className="flex transition-transform duration-500 ease-in-out" 
+              <div
+                className="flex transition-transform duration-500 ease-in-out"
                 style={{ transform: `translateX(-${activeSlide * 100}%)` }}
               >
                 {/* Slide 1 - Timeline Area Chart */}
@@ -358,31 +381,31 @@ export default function MarketerDashboard() {
                       <AreaChart data={timelineData} margin={{ top: 20, right: 20, left: -10, bottom: 0 }}>
                         <defs>
                           <linearGradient id="colorReports" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25}/>
-                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(156, 163, 175, 0.15)" />
-                        <XAxis 
-                          dataKey="date" 
-                          tickLine={false} 
-                          axisLine={false} 
+                        <XAxis
+                          dataKey="date"
+                          tickLine={false}
+                          axisLine={false}
                           tick={{ fill: '#9CA3AF', fontSize: 11 }}
                         />
-                        <YAxis 
-                          tickLine={false} 
-                          axisLine={false} 
+                        <YAxis
+                          tickLine={false}
+                          axisLine={false}
                           allowDecimals={false}
                           tick={{ fill: '#9CA3AF', fontSize: 11 }}
                         />
                         <Tooltip content={<TimelineTooltip />} />
-                        <Area 
-                          type="monotone" 
-                          dataKey="Reports Logged" 
-                          stroke="#6366f1" 
+                        <Area
+                          type="monotone"
+                          dataKey="Reports Logged"
+                          stroke="#6366f1"
                           strokeWidth={2}
-                          fillOpacity={1} 
-                          fill="url(#colorReports)" 
+                          fillOpacity={1}
+                          fill="url(#colorReports)"
                         />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -421,7 +444,7 @@ export default function MarketerDashboard() {
                           innerRadius={65}
                           outerRadius={105}
                           paddingAngle={4}
-                          label={({ percent }) => (percent !== undefined && percent > 0.05) ? `${(percent * 100).toFixed(0)}%` : ""}
+                          label={renderMarketerPieLabel}
                           labelLine={false}
                         >
                           {budgetData.map((entry, index) => (
@@ -429,9 +452,9 @@ export default function MarketerDashboard() {
                           ))}
                         </Pie>
                         <Tooltip content={<BudgetTooltip />} />
-                        <Legend 
-                          layout="horizontal" 
-                          verticalAlign="bottom" 
+                        <Legend
+                          layout="horizontal"
+                          verticalAlign="bottom"
                           align="center"
                           wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
                         />

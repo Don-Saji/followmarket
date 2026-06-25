@@ -9,23 +9,24 @@ import { Loader2 } from "lucide-react";
 
 const COLORS = ["#6366f1", "#a855f7", "#06b6d4", "#10b981", "#f59e0b", "#f43f5e"];
 
-// Custom Tooltip for PieChart
+// Custom Tooltip for PieChart - shown on hover
 const CustomPieTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     return (
-      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-gray-800 p-3 rounded-lg shadow-lg text-xs min-w-[160px]">
-        <p className="font-bold text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-800 pb-1 mb-1.5">
-          {data.fullName}
-        </p>
+      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-gray-800 p-3 rounded-lg shadow-lg text-xs min-w-[180px]">
+        <div className="flex items-center gap-2 border-b border-gray-100 dark:border-gray-800 pb-1.5 mb-2">
+          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: payload[0].color }} />
+          <p className="font-bold text-gray-900 dark:text-gray-100">{data.fullName}</p>
+        </div>
         <div className="space-y-1 text-gray-600 dark:text-gray-300">
-          <div className="flex justify-between gap-4">
+          <div className="flex justify-between gap-6">
             <span className="font-medium">Budget Used:</span>
-            <span className="font-bold text-zinc-900 dark:text-zinc-150">₹{data.cost.toLocaleString()}</span>
+            <span className="font-bold text-zinc-900 dark:text-zinc-100">₹{data.cost.toLocaleString()}</span>
           </div>
-          <div className="flex justify-between gap-4">
+          <div className="flex justify-between gap-6">
             <span className="font-medium">Activities:</span>
-            <span className="font-bold text-zinc-900 dark:text-zinc-150">{data.count}</span>
+            <span className="font-bold text-zinc-900 dark:text-zinc-100">{data.count}</span>
           </div>
         </div>
       </div>
@@ -200,8 +201,8 @@ export default function AdminDashboard() {
                         data={pieChartData}
                         cx="50%"
                         cy="50%"
-                        innerRadius={65}
-                        outerRadius={105}
+                        innerRadius={60}
+                        outerRadius={95}
                         paddingAngle={3}
                         dataKey="value"
                         nameKey="name"
