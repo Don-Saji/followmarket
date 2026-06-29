@@ -3,9 +3,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/contexts/AuthContext";
 import { db } from "@/lib/firebase/config";
-import { collection, getDocs, query, where, DocumentData } from "firebase/firestore";
+import { collection, getDocs, query, where, DocumentData, setDoc, doc } from "firebase/firestore";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { Loader2 } from "lucide-react";
+import { Loader2, Info, Pencil, Check } from "lucide-react";
 
 const COLORS = ["#6366f1", "#a855f7", "#06b6d4", "#10b981", "#f59e0b", "#f43f5e"];
 
@@ -42,6 +42,16 @@ export default function AdminDashboard() {
   const [activeMarketersCount, setActiveMarketersCount] = useState(0);
   const [selectedMetric, setSelectedMetric] = useState<"cost" | "count">("cost");
 
+  const [targetTab, setTargetTab] = useState<"Institution" | "Hospital">("Institution");
+  const [targets, setTargets] = useState<{ [key: string]: number }>({});
+  const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+  const [editingTargetValue, setEditingTargetValue] = useState<string>("");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     let active = true;
     const fetchStats = async () => {
@@ -59,13 +69,24 @@ export default function AdminDashboard() {
           };
         });
 
-        // 2. Get active marketers count
+        // 2. Get active marketers data
         const marketersQ = query(collection(db, "users"), where("role", "==", "marketer"));
         const marketersSnap = await getDocs(marketersQ);
 
         if (active) {
           setActivities(fetchedActivities);
           setActiveMarketersCount(marketersSnap.size);
+        }
+
+        // Fetch targets
+        const targetsSnap = await getDocs(collection(db, "targets"));
+        const fetchedTargets: { [key: string]: number } = {};
+        targetsSnap.docs.forEach(doc => {
+          fetchedTargets[doc.id] = doc.data().target || 0;
+        });
+
+        if (active) {
+          setTargets(fetchedTargets);
         }
       } catch (error) {
         console.error("Error fetching admin stats:", error);
@@ -94,6 +115,81 @@ export default function AdminDashboard() {
       totalCost: totalCost,
     };
   }, [activities, activeMarketersCount]);
+
+  // Generate array of months from when marketing started up to now
+  const targetMonths = useMemo(() => {
+    const now = new Date();
+    
+    // Find the earliest date among all activities
+    let earliestDate = now;
+    activities.forEach(act => {
+      const actDate = act.date 
+        ? new Date(act.date) 
+        : (act.createdAt 
+            ? (typeof act.createdAt.toMillis === 'function' 
+                ? new Date(act.createdAt.toMillis()) 
+                : new Date(act.createdAt)) 
+            : null);
+      if (actDate && actDate < earliestDate) {
+        earliestDate = actDate;
+      }
+    });
+
+    const months = [];
+    const startYear = earliestDate.getFullYear();
+    const startMonth = earliestDate.getMonth();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+
+    const totalMonths = (currentYear - startYear) * 12 + (currentMonth - startMonth) + 1;
+    // Cap to a reasonable limit just in case (e.g. 60 months = 5 years) to prevent infinite UI loops
+    const safeTotalMonths = Math.min(Math.max(totalMonths, 1), 60);
+
+    for (let i = 0; i < safeTotalMonths; i++) {
+      const d = new Date(currentYear, currentMonth - i, 1);
+      months.push({
+        year: d.getFullYear(),
+        monthIndex: d.getMonth(),
+        monthName: d.toLocaleString('default', { month: 'long' }),
+      });
+    }
+    return months.reverse(); // Chronological order: Oldest to Newest
+  }, [activities]);
+
+  // Pre-calculate target activity counts by month to optimize rendering
+  const aggregatedCounts = useMemo(() => {
+    const counts: Record<string, { Institution: number, Hospital: number }> = {};
+    
+    activities.forEach(act => {
+      if (act.activityType === "Follow up with Institutes" || act.activityType === "Follow up with Hospitals") {
+        const actDate = act.date 
+          ? new Date(act.date) 
+          : (act.createdAt 
+              ? (typeof act.createdAt.toMillis === 'function' 
+                  ? new Date(act.createdAt.toMillis()) 
+                  : new Date(act.createdAt)) 
+              : null);
+              
+        if (actDate) {
+          const year = actDate.getFullYear();
+          const monthIndex = actDate.getMonth();
+          const monthKey = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+          
+          if (!counts[monthKey]) {
+            counts[monthKey] = { Institution: 0, Hospital: 0 };
+          }
+          
+          if (act.activityType === "Follow up with Institutes") {
+            counts[monthKey].Institution += 1;
+          } else {
+            counts[monthKey].Hospital += 1;
+          }
+        }
+      }
+    });
+    
+    return counts;
+  }, [activities]);
 
   // Compute breakdown for PieChart
   const pieChartData = useMemo(() => {
@@ -242,6 +338,165 @@ export default function AdminDashboard() {
               </div>
             )}
           </div>
+
+          {/* Monthly Targets Section */}
+          <div className="mt-8 bg-white dark:bg-black rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm animate-fade-in">
+            {/* Header and Toggle */}
+            <div className="p-6 border-b border-gray-100 dark:border-gray-800">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-bold tracking-tight">
+                    {targetTab === "Institution" ? "Institution Follow-up Targets" : "Hospital Follow-up Targets"}
+                  </h2>
+                  <div className="group relative flex items-center justify-center text-gray-400 hover:text-gray-500 cursor-help">
+                    <Info className="w-4 h-4" />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-gray-900 text-white text-[10px] p-2 rounded shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 text-center">
+                      Set monthly target goals. Green rows indicate the target has been met.
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex p-1 bg-gray-100 dark:bg-zinc-900 rounded-lg shrink-0">
+                  <button
+                    onClick={() => setTargetTab("Institution")}
+                    className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                      targetTab === "Institution" 
+                        ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-sm" 
+                        : "text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 cursor-pointer"
+                    }`}
+                  >
+                    Institution
+                  </button>
+                  <button
+                    onClick={() => setTargetTab("Hospital")}
+                    className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                      targetTab === "Hospital" 
+                        ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-sm" 
+                        : "text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 cursor-pointer"
+                    }`}
+                  >
+                    Hospital
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5">All months since marketing started • Click target value to edit</p>
+            </div>
+
+            {/* Targets Table */}
+            <div className="overflow-x-auto">
+              {mounted ? (
+                <table className="w-full text-sm text-center">
+                  <thead className="text-xs text-white uppercase bg-blue-600 dark:bg-blue-600">
+                    <tr>
+                      <th className="px-6 py-3.5 font-semibold text-left">Month</th>
+                      <th className="px-6 py-3.5 font-semibold">Monthly Target</th>
+                      <th className="px-6 py-3.5 font-semibold">Reports Submitted</th>
+                      <th className="px-6 py-3.5 font-semibold">Achieved Target</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                    {targetMonths.map(({ year, monthIndex, monthName }) => {
+                      const displayMonth = `${monthName} ${year}`;
+                      
+                      const monthKey = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+                      const targetId = `${monthKey}_${targetTab}`;
+                      const currentTarget = targets[targetId] || 0;
+
+                      // Aggregate reports for this month
+                      const submittedReports = aggregatedCounts[monthKey]?.[targetTab] || 0;
+
+                      const isTargetMet = currentTarget > 0 && submittedReports >= currentTarget;
+                      const isEditing = editingTargetId === targetId;
+
+                      return (
+                        <tr 
+                          key={targetId} 
+                          className={`transition-colors ${
+                            isTargetMet 
+                              ? "bg-green-100/60 dark:bg-green-900/20" 
+                              : "bg-red-50/50 dark:bg-red-900/10 hover:bg-red-100/50 dark:hover:bg-red-900/20"
+                          }`}
+                        >
+                          <td className="px-6 py-4 font-bold text-gray-900 dark:text-white text-left">
+                            {displayMonth}
+                          </td>
+                          <td className="px-6 py-4 font-semibold text-gray-900 dark:text-gray-100">
+                            {isEditing ? (
+                              <div className="flex items-center justify-center gap-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={editingTargetValue}
+                                  onChange={(e) => setEditingTargetValue(e.target.value)}
+                                  className="w-20 px-2 py-1 text-center text-sm border border-blue-500 rounded focus:outline-none focus:ring-1 focus:ring-blue-600 bg-white dark:bg-black text-black dark:text-white"
+                                  autoFocus
+                                  onKeyDown={async (e) => {
+                                    if (e.key === 'Enter') {
+                                      const val = parseInt(editingTargetValue) || 0;
+                                      try {
+                                        await setDoc(doc(db, "targets", targetId), { target: val }, { merge: true });
+                                        setTargets(prev => ({ ...prev, [targetId]: val }));
+                                      } catch (err) {
+                                        console.error("Error updating target", err);
+                                      }
+                                      setEditingTargetId(null);
+                                    }
+                                    if (e.key === 'Escape') {
+                                      setEditingTargetId(null);
+                                    }
+                                  }}
+                                />
+                                <button 
+                                  onClick={async () => {
+                                    const val = parseInt(editingTargetValue) || 0;
+                                    try {
+                                      await setDoc(doc(db, "targets", targetId), { target: val }, { merge: true });
+                                      setTargets(prev => ({ ...prev, [targetId]: val }));
+                                    } catch (err) {
+                                      console.error("Error updating target", err);
+                                    }
+                                    setEditingTargetId(null);
+                                  }}
+                                  className="p-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div 
+                                className="group flex items-center justify-center gap-1.5 cursor-pointer"
+                                onClick={() => {
+                                  setEditingTargetId(targetId);
+                                  setEditingTargetValue(String(currentTarget));
+                                }}
+                                title="Click to edit"
+                              >
+                                <span className="text-base">{currentTarget}</span>
+                                <Pencil className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 font-medium text-gray-600 dark:text-gray-300">
+                            {submittedReports}
+                          </td>
+                          <td className="px-6 py-4 font-bold text-gray-900 dark:text-white">
+                            {submittedReports} / {currentTarget}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="flex justify-center items-center py-12">
+                  <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                </div>
+              )}
+            </div>
+          </div>
+
+
+
         </>
       )}
     </div>
